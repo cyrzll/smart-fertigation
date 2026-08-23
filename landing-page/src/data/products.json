@@ -1,0 +1,44 @@
+[
+  {
+    "id": "prod-1",
+    "name": "Melon Golden Inthanon RZ",
+    "category": "Golden Melon",
+    "image": "/products/melon_golden_inthanon.jpg",
+    "price": 4500000,
+    "priceUnit": "kg",
+    "sold": 350,
+    "stock": 80,
+    "brix": "14 - 16° Brix",
+    "weight": "1.5 - 2.2 kg",
+    "description": "Melon unggulan hidroponik Desa Ngablak dengan kulit kuning keemasan berjarit indah. Daging buah renyah (crunchy), sangat manis, dan bebas residu pestisida berkat Smart Crop Protection.",
+    "featured": true
+  },
+  {
+    "id": "prod-2",
+    "name": "Melon Sweet Emerald",
+    "category": "Green Melon",
+    "image": "/products/melon_sweet_emerald.jpg",
+    "price": 40000,
+    "priceUnit": "kg",
+    "sold": 280,
+    "stock": 65,
+    "brix": "13 - 15° Brix",
+    "weight": "1.8 - 2.5 kg",
+    "description": "Melon hijau premium Jepang beraroma harum legendaris dengan tingkat kebasahan juicy tinggi. Diolah menggunakan sistem fertigasi presisi AIoT tanpa limbah pupuk.",
+    "featured": true
+  },
+  {
+    "id": "prod-3",
+    "name": "Melon Japanese Rock Orange",
+    "category": "Rock Melon",
+    "image": "/products/melon_rock_hydroponic.jpg",
+    "price": 48000,
+    "priceUnit": "kg",
+    "sold": 410,
+    "stock": 45,
+    "brix": "15 - 17° Brix",
+    "weight": "1.6 - 2.3 kg",
+    "description": "Varietas Rock Melon Jepang bercita rasa manis lembut melty di mulut dengan daging buah oranye pekat kaya beta-karoten. Hasil panen terbaik Kelompok Tani Sido Maju Tanjung.",
+    "featured": true
+  }
+]
