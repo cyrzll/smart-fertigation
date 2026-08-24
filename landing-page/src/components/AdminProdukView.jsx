@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
 import { ShoppingBag, Plus, Edit2, Trash2, Upload, CheckCircle2, AlertCircle, RefreshCw, Flame, Tag } from 'lucide-react';
 import { Navbar } from './Navbar';
 import { Footer } from './Footer';

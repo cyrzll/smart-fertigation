@@ -8,8 +8,12 @@ import { ProductKatalogSection } from './ProductKatalogSection';
 import { SdgSection } from './SdgSection';
 import { FarmerSidoMaju } from './FarmerSidoMaju';
 import { Footer } from './Footer';
+import { useLenisScroll } from '../hooks/useGsap';
 
 export const App = () => {
+  // Initialize Lenis smooth scrolling + GSAP ScrollTrigger at root
+  useLenisScroll();
+
   return (
     <div className="min-h-screen bg-[#FAF7EE] text-[#16381E] selection:bg-[#4B7F38] selection:text-[#FAF7EE]">
       <Navbar />

@@ -1,87 +1,126 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useRef, useEffect } from 'react';
+import { gsap, ScrollTrigger } from '../hooks/useGsap';
 import { Cpu, ShieldCheck, Database, Radio, Droplets, ArrowRight, CheckCircle2, Server } from 'lucide-react';
+import { DASHBOARD_URL } from '../config';
 
 export const TechnologySection = () => {
+  const sectionRef = useRef(null);
+  const headerRef = useRef(null);
+  const cardRefs = useRef([]);
+  const bannerRef = useRef(null);
+
   const techSteps = [
     {
       step: '01',
-      title: 'Sensor Lapang Presisi',
-      desc: 'Membaca kelembaban tanah, suhu lingkungan, dan kadar nutrisi secara realtime dari lahan pertanian 116 Ha Ngablak.',
-      icon: Radio,
+      title: 'Proteksi Fisik Anti-Dwarfing',
+      desc: 'Smart Crop Protection berbasis proteksi fisik (barrier/screen) yang efektif memblokir hama serangga vektor pembawa virus dwarfing.',
+      icon: ShieldCheck,
     },
     {
       step: '02',
-      title: 'Proteksi Anti-Dwarfing',
-      desc: 'Smart Crop Protection fisik & digital yang memblokir serangan hama serangga pembawa virus dwarfing pada tanaman melon.',
-      icon: ShieldCheck,
+      title: 'Sistem Fertigasi Presisi',
+      desc: 'Penyaluran air dan nutrisi pupuk otomatis langsung ke akar tanaman guna mengeliminasi pemborosan biaya input (zero waste).',
+      icon: Droplets,
     },
     {
       step: '03',
       title: 'Mikrokontroler ESP32',
-      desc: 'Node pintar pengontrol relay solenoid valve yang mengeksekusi penyiraman sesuai instruksi jadwal HST.',
+      desc: 'Node pintar pengontrol relay & solenoid valve yang mengeksekusi penyiraman secara otomatis sesuai jadwal fase tanam (HST).',
       icon: Cpu,
     },
     {
       step: '04',
-      title: 'Hono API & Dashboard',
-      desc: 'Server backend Node.js ultra-cepat yang menghubungkan data ke dashboard kontrol petani secara realtime.',
+      title: 'Hono API & Dashboard IoT',
+      desc: 'Server backend Node.js dan dashboard kontrol realtime untuk memonitor dan mengontrol sistem fertigasi dari mana saja.',
       icon: Server,
     },
   ];
 
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      // Cards stagger (fade in from bottom, resets on scroll up)
+      const cards = cardRefs.current.filter(Boolean);
+      cards.forEach((card, i) => {
+        gsap.from(card, {
+          opacity: 0,
+          y: 40,
+          duration: 0.7,
+          delay: i * 0.1,
+          ease: 'power2.out',
+          scrollTrigger: {
+            trigger: card,
+            start: 'top 88%',
+            toggleActions: 'play none none reverse',
+          },
+        });
+      });
+
+      // Banner (resets on scroll up)
+      if (bannerRef.current) {
+        gsap.from(bannerRef.current, {
+          opacity: 0,
+          y: 50,
+          duration: 0.8,
+          ease: 'power2.out',
+          scrollTrigger: {
+            trigger: bannerRef.current,
+            start: 'top 85%',
+            toggleActions: 'play none none reverse',
+          },
+        });
+      }
+    }, sectionRef);
+
+    return () => ctx.revert();
+  }, []);
+
   return (
-    <section id="teknologi" className="py-24 bg-gradient-to-b from-[#FAF7EE] via-[#F4EFE0] to-[#FAF7EE] relative">
+    <section ref={sectionRef} id="teknologi" className="pt-8 pb-20 sm:pb-24 bg-[#FAF7EE] relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Header */}
-        <div className="text-center max-w-3xl mx-auto mb-16 space-y-3">
-          <h2 className="text-3xl sm:text-4xl font-black text-[#16381E] tracking-tight">
-            Smart Crop Protection &amp; <span className="text-[#4B7F38]">Fertigasi Otomatis</span>
-          </h2>
-          <p className="text-sm sm:text-base text-[#2E4F34] font-medium leading-relaxed">
-            Integrasi AIoT Terpadu Mengeliminasi Pemborosan Pupuk (Zero Waste) dan Memutus Risiko Gagal Panen Virus Dwarfing.
-          </p>
+        {/* Pipeline Subtitle */}
+        <div className="text-center max-w-xl mx-auto mb-10 sm:mb-12 space-y-1.5">
+          <span className="text-xs font-black text-[#4B7F38] uppercase tracking-wider">
+            Arsitektur Pipeline AIoT
+          </span>
+          <h3 className="text-xl sm:text-2xl font-black text-[#16381E]">
+            Empat Tahapan Proteksi &amp; Fertigasi Presisi
+          </h3>
         </div>
 
-        {/* Tech Pipeline Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
+        {/* Tech Pipeline Grid (Thin subtle outline) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-12 sm:mb-16">
           {techSteps.map((t, idx) => {
             const Icon = t.icon;
             return (
-              <motion.div
+              <div
                 key={t.step}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: idx * 0.1 }}
-                className="bg-white border border-[#D8E6C3] rounded-3xl p-6 shadow-xl shadow-[#16381E]/5 flex flex-col justify-between relative overflow-hidden group hover:border-[#4B7F38] transition-all"
+                ref={(el) => (cardRefs.current[idx] = el)}
+                className="border border-[#16381E]/15 rounded-3xl p-5 sm:p-6 flex flex-col justify-between relative overflow-hidden group hover:border-[#4B7F38]/60 transition-colors"
               >
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   <div className="flex items-center justify-between">
-                    <div className="w-12 h-12 rounded-2xl bg-[#EAF5D8] text-[#16381E] flex items-center justify-center font-bold group-hover:bg-[#16381E] group-hover:text-white transition-colors">
-                      <Icon className="w-6 h-6" />
-                    </div>
-                    <span className="text-xl font-black text-[#C6E29B] font-mono">{t.step}</span>
+                    <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-[#4B7F38]" />
+                    <span className="text-xl sm:text-2xl font-black text-[#16381E]/30 font-mono">{t.step}</span>
                   </div>
 
-                  <h3 className="text-base font-extrabold text-[#16381E]">{t.title}</h3>
+                  <h3 className="text-base sm:text-lg font-black text-[#16381E]">{t.title}</h3>
                   <p className="text-xs text-[#2E4F34] leading-relaxed font-medium">{t.desc}</p>
                 </div>
 
-                <div className="pt-4 mt-4 border-t border-[#FAF7EE] flex items-center space-x-1 text-[11px] font-bold text-[#4B7F38]">
+                <div className="pt-3 sm:pt-4 mt-3 sm:mt-4 border-t border-[#16381E]/10 flex items-center space-x-1.5 text-xs font-bold text-[#4B7F38]">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Sistem Aktif Presisi</span>
                 </div>
-              </motion.div>
+              </div>
             );
           })}
         </div>
 
-        {/* Dashboard Integration Banner */}
-        <div className="bg-[#16381E] text-[#FAF7EE] rounded-3xl p-8 sm:p-10 border border-[#A3C978]/30 shadow-2xl flex flex-col lg:flex-row items-center justify-between gap-8">
+        {/* Dashboard Integration Banner (Thin subtle outline) */}
+        <div ref={bannerRef} className="border border-[#16381E]/20 text-[#16381E] rounded-3xl p-6 sm:p-8 lg:p-10 flex flex-col lg:flex-row items-center justify-between gap-6 sm:gap-8">
           <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6 text-center sm:text-left">
-            <div className="w-24 h-24 rounded-2xl bg-white/10 p-2 flex items-center justify-center shrink-0 border border-[#A3C978]/30">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
               <img
                 src="/icon/melo_megaphone.png"
                 alt="MELO Megaphone Announcer"
@@ -89,22 +128,22 @@ export const TechnologySection = () => {
               />
             </div>
             <div className="space-y-2">
-              <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#A3C978]/20 text-[#A3C978] text-xs font-bold border border-[#A3C978]/30">
-                <Droplets className="w-3.5 h-3.5" />
+              <span className="inline-flex items-center space-x-1.5 text-[#4B7F38] text-xs font-bold uppercase tracking-wider">
+                <Droplets className="w-4 h-4" />
                 <span>Realtime IoT Monitoring</span>
               </span>
-              <h3 className="text-2xl font-black text-[#FAF7EE]">Terhubung Langsung dengan Dashboard Fertigasi</h3>
-              <p className="text-xs sm:text-sm text-[#D8E6C3] max-w-xl font-medium">
+              <h3 className="text-xl sm:text-2xl font-black text-[#16381E]">Terhubung Langsung dengan Dashboard Fertigasi</h3>
+              <p className="text-xs sm:text-sm text-[#2E4F34] max-w-xl font-medium leading-relaxed">
                 Pantau HST tanaman melon, atur durasi siram per valve, jalankan mode demo pengujian relay, dan kelola master profil nutrisi dari mana saja.
               </p>
             </div>
           </div>
 
           <a
-            href="http://localhost:4321"
+            href={DASHBOARD_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center space-x-2 bg-[#A3C978] hover:bg-[#b5da8c] text-[#16381E] font-black px-7 py-3.5 rounded-2xl text-sm transition shadow-lg shrink-0"
+            className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 border border-[#16381E]/30 text-[#16381E] hover:text-[#4B7F38] hover:border-[#4B7F38] font-black px-6 sm:px-7 py-3 sm:py-3.5 rounded-full text-xs sm:text-sm transition-colors shrink-0"
           >
             <span>Buka Dashboard Fertigasi</span>
             <ArrowRight className="w-4 h-4 stroke-[3]" />
