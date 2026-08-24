@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { 
-  MessageSquare, RefreshCw, Send, CheckCircle2, AlertCircle, Phone, LogOut, ShieldCheck, Zap,
+  MessageSquare, RefreshCw, Send, Phone, LogOut, ShieldCheck, Zap,
   Activity, Thermometer, Calendar, Settings, Sprout, ToggleRight, Wrench, HelpCircle, Smartphone, Cpu
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { actions } from 'astro:actions';
 import api from '../lib/axios';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const WaBotView = () => {
   const [waStatus, setWaStatus] = useState(null);
@@ -13,13 +16,17 @@ export const WaBotView = () => {
   const [phone, setPhone] = useState('');
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
-  const [notice, setNotice] = useState(null);
+  const [showRestartModal, setShowRestartModal] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   const fetchWaStatus = async () => {
     try {
-      const res = await api.get('/api/wa/status');
-      if (res.data.success) {
-        setWaStatus(res.data);
+      const { data: resData, error: actionError } = await actions.getWaStatus();
+      if (!actionError && resData && resData.success) {
+        setWaStatus(resData);
+      } else {
+        const res = await api.get('/api/wa/status');
+        if (res.data.success) setWaStatus(res.data);
       }
     } catch (err) {
       console.error(err);
@@ -40,35 +47,49 @@ export const WaBotView = () => {
 
     try {
       setSending(true);
-      setNotice(null);
-      const res = await api.post('/api/wa/send', { phone, message: messageText });
-      if (res.data.success) {
-        setNotice({ type: 'success', text: 'Pesan berhasil dikirim!' });
+      const { data: resData, error: actionError } = await actions.sendWaMessage({ phone, message: messageText });
+      if (!actionError && resData?.success) {
+        goeyToast.success('Pesan WhatsApp berhasil dikirim!');
         setMessageText('');
       } else {
-        setNotice({ type: 'error', text: res.data.message || res.data.error || 'Gagal mengirim pesan' });
+        const res = await api.post('/api/wa/send', { phone, message: messageText });
+        if (res.data.success) {
+          goeyToast.success('Pesan WhatsApp berhasil dikirim!');
+          setMessageText('');
+        } else {
+          goeyToast.error(res.data.message || res.data.error || 'Gagal mengirim pesan');
+        }
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Gagal terhubung ke server';
-      setNotice({ type: 'error', text: msg });
+      goeyToast.error(msg);
     } finally {
       setSending(false);
     }
   };
 
-  const handleRestartBot = async () => {
-    if (!confirm('Yakin ingin merestart WhatsApp Bot?')) return;
+  const handleRestartBotConfirm = async () => {
     try {
-      setLoading(true);
-      const res = await api.post('/api/wa/restart');
-      if (res.data.success) {
-        setNotice({ type: 'success', text: 'WhatsApp Bot direstart.' });
+      setRestarting(true);
+      const { data: resData, error: actionError } = await actions.restartWaBot();
+      if (!actionError && resData?.success) {
+        goeyToast.success('WhatsApp Bot berhasil direstart!');
+        setShowRestartModal(false);
         fetchWaStatus();
+      } else {
+        const res = await api.post('/api/wa/restart');
+        if (res.data.success) {
+          goeyToast.success('WhatsApp Bot berhasil direstart!');
+          setShowRestartModal(false);
+          fetchWaStatus();
+        } else {
+          goeyToast.error('Gagal merestart bot');
+        }
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal merestart WhatsApp Bot');
     } finally {
-      setLoading(false);
+      setRestarting(false);
     }
   };
 
@@ -103,23 +124,14 @@ export const WaBotView = () => {
             <span>Refresh</span>
           </button>
           <button
-            onClick={handleRestartBot}
-            className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 text-xs font-medium transition"
+            onClick={() => setShowRestartModal(true)}
+            className="border border-red-300 text-red-500 hover:bg-red-50 font-medium px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Restart</span>
           </button>
         </div>
       </div>
-
-      {notice && (
-        <div className={`px-4 py-3 rounded-xl text-sm flex items-center space-x-2 border ${
-          notice.type === 'success' ? 'border-[#C8D9B0] text-[#3A6B2A]' : 'border-red-300 text-red-600'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
 
       {/* Connection & Send Form */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -250,6 +262,19 @@ export const WaBotView = () => {
           })}
         </div>
       </div>
+
+      {/* Restart WhatsApp Bot Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showRestartModal}
+        title="Restart WhatsApp Bot"
+        message="Apakah Anda yakin ingin merestart proses WhatsApp Bot? Koneksi aktif akan diputus dan diinisialisasi ulang."
+        confirmText="Ya, Restart Bot"
+        cancelText="Batal"
+        confirmVariant="warning"
+        loading={restarting}
+        onConfirm={handleRestartBotConfirm}
+        onCancel={() => setShowRestartModal(false)}
+      />
     </motion.div>
   );
 };

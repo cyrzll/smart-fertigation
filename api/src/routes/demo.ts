@@ -1,49 +1,46 @@
 import { Hono } from 'hono';
 import { pool } from '../db.js';
+import { sendValveCommandToDevice, isDeviceSocketConnected, broadcastToDashboards } from '../services/wsServer.js';
 
 const app = new Hono();
 
 app.get('/', async (c) => {
   try {
     const [devices]: any = await pool.query(
-      'SELECT * FROM devices WHERE is_active = 1 LIMIT 1'
+      'SELECT * FROM devices ORDER BY (status = "verified") DESC, (user_id IS NOT NULL) DESC, id DESC'
     );
 
-    let device = null;
-    if (devices.length > 0) {
-      const d = devices[0];
-      let is_online = false;
-      if (d.last_seen) {
-        const lastSeenDate = new Date(d.last_seen).getTime();
-        const now = Date.now();
-        // Online if seen within last 60 seconds
-        if (now - lastSeenDate < 60000) {
-          is_online = true;
-        }
-      }
-      device = { ...d, is_online };
-    }
+    const mappedDevices = devices.map((d: any) => {
+      const isOnlineWs = isDeviceSocketConnected(d.device_code, d.serial_code);
+      const lastSeenDate = d.last_seen ? new Date(d.last_seen).getTime() : 0;
+      const is_online = isOnlineWs || (Date.now() - lastSeenDate < 60000);
+      return { ...d, is_online };
+    });
+
+    const device = mappedDevices.length > 0 ? mappedDevices[0] : null;
 
     const [valves]: any = await pool.query(
-      'SELECT * FROM valves WHERE is_active = 1 ORDER BY name ASC'
+      'SELECT * FROM valves ORDER BY name ASC'
     );
 
     const [commands]: any = await pool.query(`
-      SELECT dc.*, v.name as valve_name, d.name as device_name
+      SELECT dc.*, v.name AS valve_name, COALESCE(v.gpio, 25) AS gpio_pin, d.name AS device_name, d.device_code
       FROM device_commands dc
-      JOIN valves v ON dc.valve_id = v.id
-      JOIN devices d ON dc.device_id = d.id
+      LEFT JOIN valves v ON v.id = dc.valve_id
+      LEFT JOIN devices d ON d.id = dc.device_id
       ORDER BY dc.id DESC
-      LIMIT 20
+      LIMIT 15
     `);
 
     return c.json({
       success: true,
       device,
+      devices: mappedDevices,
       valves,
       commands,
     });
   } catch (err: any) {
+    console.error('❌ [Demo] Error in GET /api/demo:', err);
     return c.json({ success: false, error: err.message }, 500);
   }
 });
@@ -53,39 +50,52 @@ app.post('/command', async (c) => {
     const body = await c.req.json();
     const { device_id, valve_id, command, duration_seconds } = body;
 
-    if (!device_id || !valve_id || !command) {
-      return c.json({ success: false, message: 'Device, valve, dan command wajib diisi.' }, 400);
-    }
-
-    if (!['TEST_OPEN', 'CLOSE'].includes(command)) {
-      return c.json({ success: false, message: 'Command tidak valid.' }, 400);
-    }
-
-    if (command === 'TEST_OPEN' && !duration_seconds) {
-      return c.json({ success: false, message: 'Durasi test valve harus diisi.' }, 400);
-    }
-
-    // Expire old pending commands
-    await pool.query(
-      "UPDATE device_commands SET status = 'expired' WHERE device_id = ? AND status = 'pending'",
+    const [devices]: any = await pool.query(
+      'SELECT * FROM devices WHERE id = ?',
       [device_id]
     );
 
-    const expDate = new Date(Date.now() + 30000); // 30 seconds from now
-    const expires_at = expDate.toISOString().slice(0, 19).replace('T', ' ');
+    if (devices.length === 0) {
+      return c.json({ success: false, message: 'Device tidak ditemukan' }, 404);
+    }
 
-    const durSec = command === 'TEST_OPEN' ? parseInt(duration_seconds, 10) : null;
+    const [valves]: any = await pool.query(
+      'SELECT * FROM valves WHERE id = ?',
+      [valve_id]
+    );
+
+    if (valves.length === 0) {
+      return c.json({ success: false, message: 'Valve tidak ditemukan' }, 404);
+    }
+
+    const dev = devices[0];
+    const valve = valves[0];
+    const gpio = valve.gpio_pin || 25;
+    const durSec = duration_seconds ? Number(duration_seconds) : 5;
+    const actionCmd = command === 'CLOSE' ? 'CLOSE' : 'OPEN';
+
+    // Insert command to device_commands
+    const expires_at = new Date(Date.now() + 60000); // 1 minute
 
     const [res]: any = await pool.query(
       `INSERT INTO device_commands (device_id, valve_id, command, duration_seconds, status, expires_at)
-       VALUES (?, ?, ?, ?, 'pending', ?)`,
+       VALUES (?, ?, ?, ?, 'running', ?)`,
       [device_id, valve_id, command, durSec, expires_at]
     );
+    const cmdId = res.insertId;
+
+    // Send instant WebSocket event to ESP32
+    const wsSent = sendValveCommandToDevice(dev.device_code, dev.serial_code, cmdId, gpio, actionCmd, durSec);
+
+    console.log(`🚰 [Demo] Sent command #${cmdId} (${actionCmd}, GPIO ${gpio}, ${durSec}s) to ${dev.device_code}: WS result = ${wsSent}`);
 
     return c.json({
       success: true,
-      message: 'Perintah demo dikirim.',
-      id: res.insertId,
+      message: wsSent
+        ? `Perintah ${command} berhasil dikirim ke ESP32 secara instan via WebSocket!`
+        : `Perintah ${command} tersimpan. Menunggu koneksi ESP32.`,
+      id: cmdId,
+      ws_sent: wsSent,
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);

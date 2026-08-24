@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Layers, Plus, Trash2, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Layers, Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const ProfilesView = ({ apiUrl }) => {
   const [profiles, setProfiles] = useState([]);
@@ -8,13 +11,16 @@ export const ProfilesView = ({ apiUrl }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState(null);
+
+  // Delete Confirm Modal State
+  const [deletingProfileId, setDeletingProfileId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchProfiles = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${apiUrl}/api/profiles`);
-      const json = await res.json();
+      const { data: resData, error: actionError } = await actions.getProfiles();
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/profiles')).json();
       if (json.success) {
         setProfiles(json.profiles);
       }
@@ -35,23 +41,24 @@ export const ProfilesView = ({ apiUrl }) => {
 
     try {
       setSubmitting(true);
-      setNotice(null);
-      const res = await fetch(`${apiUrl}/api/profiles`, {
+      const payload = { name, description };
+      const { data: resData, error: actionError } = await actions.addProfile(payload);
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description }),
-      });
-      const json = await res.json();
+        body: JSON.stringify(payload),
+      })).json();
+
       if (json.success) {
-        setNotice({ type: 'success', text: json.message });
+        goeyToast.success(json.message || 'Profil berhasil ditambahkan!');
         setName('');
         setDescription('');
         fetchProfiles();
       } else {
-        setNotice({ type: 'error', text: json.message || 'Gagal menambah profil' });
+        goeyToast.error(json.message || 'Gagal menambah profil');
       }
     } catch (err) {
-      setNotice({ type: 'error', text: 'Gagal terhubung ke API server' });
+      goeyToast.error('Gagal terhubung ke API server');
     } finally {
       setSubmitting(false);
     }
@@ -59,26 +66,43 @@ export const ProfilesView = ({ apiUrl }) => {
 
   const handleToggle = async (id) => {
     try {
-      const res = await fetch(`${apiUrl}/api/profiles/${id}/toggle`, { method: 'PATCH' });
+      const res = await fetch(`/api/profiles/${id}/toggle`, { method: 'PATCH' });
       const json = await res.json();
-      if (json.success) fetchProfiles();
+      if (json.success) {
+        goeyToast.success(json.message || 'Status profil diubah');
+        fetchProfiles();
+      } else {
+        goeyToast.error(json.message || 'Gagal mengubah status profil');
+      }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal mengubah status profil');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus profil ini?')) return;
+  const handleDeleteConfirm = async () => {
+    if (!deletingProfileId) return;
     try {
-      const res = await fetch(`${apiUrl}/api/profiles/${id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (json.success) {
+      setDeleting(true);
+      const { data: resData, error: actionError } = await actions.deleteProfileItem({ id: deletingProfileId });
+      if (!actionError && resData?.success) {
+        goeyToast.success(resData.message || 'Profil berhasil dihapus!');
+        setDeletingProfileId(null);
         fetchProfiles();
       } else {
-        alert(json.message);
+        const res = await fetch(`/api/profiles/${deletingProfileId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          goeyToast.success(json.message || 'Profil berhasil dihapus!');
+          setDeletingProfileId(null);
+          fetchProfiles();
+        } else {
+          goeyToast.error(json.message || 'Gagal menghapus profil');
+        }
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal terhubung ke API server');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -94,15 +118,6 @@ export const ProfilesView = ({ apiUrl }) => {
         <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Master Profil Fertigasi</h2>
         <p className="text-slate-500 text-sm mt-1">Kelola master template/profil fertigasi untuk berbagai varietas tanaman.</p>
       </div>
-
-      {notice && (
-        <div className={`px-4 py-3 rounded-2xl text-sm flex items-center space-x-2 shadow-sm ${
-          notice.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
 
       {/* Add Profile Form */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm shadow-emerald-950/5">
@@ -191,8 +206,8 @@ export const ProfilesView = ({ apiUrl }) => {
                       </button>
 
                       <button
-                        onClick={() => handleDelete(profile.id)}
-                        className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold inline-flex items-center space-x-1 transition"
+                        onClick={() => setDeletingProfileId(profile.id)}
+                        className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold inline-flex items-center space-x-1 transition cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                         <span>Hapus</span>
@@ -211,6 +226,19 @@ export const ProfilesView = ({ apiUrl }) => {
           </table>
         </div>
       </div>
+
+      {/* Delete Profile Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(deletingProfileId)}
+        title="Hapus Profil Fertigasi"
+        message="Apakah Anda yakin ingin menghapus template profil fertigasi ini?"
+        confirmText="Ya, Hapus Profil"
+        cancelText="Batal"
+        confirmVariant="danger"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeletingProfileId(null)}
+      />
     </motion.div>
   );
 };

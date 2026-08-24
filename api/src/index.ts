@@ -15,6 +15,7 @@ import plantingsRouter from './routes/plantings.js';
 import authRouter from './routes/auth.js';
 import waRouter from './routes/wa.js';
 import { initWaBot, closeWaBot } from './services/waBot.js';
+import { initWebSocketServer } from './services/wsServer.js';
 
 dotenv.config();
 
@@ -72,7 +73,9 @@ app.get('/', (c) => {
 const port = parseInt(process.env.PORT || '3000', 10);
 console.log(`Server is running on port ${port}`);
 
-serve({
+const server = serve({
   fetch: app.fetch,
   port,
 });
+
+initWebSocketServer(server as any);

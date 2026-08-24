@@ -122,6 +122,7 @@ export async function initDb() {
     await conn.query(`
       CREATE TABLE IF NOT EXISTS valves (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        device_id INT NULL,
         name VARCHAR(255) NOT NULL,
         gpio VARCHAR(50) NULL,
         description TEXT NULL,
@@ -130,6 +131,10 @@ export async function initDb() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    try {
+      await conn.query('ALTER TABLE valves ADD COLUMN device_id INT NULL AFTER id');
+    } catch (_) {}
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS fertigation_schedules (
@@ -156,6 +161,11 @@ export async function initDb() {
     try { await conn.query('ALTER TABLE fertigation_schedules ADD COLUMN hst_end INT UNSIGNED NOT NULL DEFAULT 99'); } catch (_) {}
     try { await conn.query('ALTER TABLE devices ADD COLUMN user_id INT NULL AFTER id'); } catch (_) {}
     try { await conn.query('ALTER TABLE devices ADD COLUMN uid VARCHAR(50) NULL AFTER user_id'); } catch (_) {}
+    try { await conn.query("ALTER TABLE devices ADD COLUMN serial_code VARCHAR(100) NULL AFTER device_code"); } catch (_) {}
+    try { await conn.query("ALTER TABLE devices ADD COLUMN confirmation_code INT NULL AFTER serial_code"); } catch (_) {}
+    try { await conn.query("ALTER TABLE devices ADD COLUMN auth_code VARCHAR(255) NULL AFTER confirmation_code"); } catch (_) {}
+    try { await conn.query("ALTER TABLE devices ADD COLUMN status VARCHAR(50) DEFAULT 'verified' AFTER auth_code"); } catch (_) {}
+    try { await conn.query("ALTER TABLE devices ADD COLUMN blink_pending TINYINT DEFAULT 0 AFTER status"); } catch (_) {}
     try { await conn.query('UPDATE devices d JOIN users u ON d.user_id = u.id SET d.uid = u.uid WHERE d.uid IS NULL AND d.user_id IS NOT NULL'); } catch (_) {}
     try { await conn.query('ALTER TABLE device_commands ADD COLUMN user_id INT NULL AFTER device_id'); } catch (_) {}
     try { await conn.query('ALTER TABLE plantings ADD COLUMN user_id INT NULL AFTER id'); } catch (_) {}
@@ -168,6 +178,11 @@ export async function initDb() {
         uid VARCHAR(50) NULL,
         name VARCHAR(255) NOT NULL,
         device_code VARCHAR(255) UNIQUE NOT NULL,
+        serial_code VARCHAR(100) NULL,
+        confirmation_code INT NULL,
+        auth_code VARCHAR(255) NULL,
+        status VARCHAR(50) DEFAULT 'verified',
+        blink_pending TINYINT DEFAULT 0,
         mode VARCHAR(50) DEFAULT 'AUTO',
         current_hst INT UNSIGNED NULL,
         last_seen DATETIME NULL,

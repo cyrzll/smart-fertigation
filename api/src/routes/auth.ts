@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import crypto from 'crypto';
 import { pool } from '../db.js';
 import { sendWaMessage, normalizePhoneAndJid } from '../services/waBot.js';
+import { sendBlinkToDevice, sendAuthApprovedToDevice, isDeviceSocketConnected, sendLedControlToDevice } from '../services/wsServer.js';
 
 const app = new Hono();
 
@@ -440,7 +442,13 @@ app.get('/users/:id/devices', async (c) => {
       'SELECT * FROM devices WHERE user_id = ? ORDER BY id DESC',
       [userId]
     );
-    return c.json({ success: true, devices });
+
+    const mapped = devices.map((d: any) => ({
+      ...d,
+      is_online: isDeviceSocketConnected(d.device_code) || isDeviceSocketConnected(d.serial_code || ''),
+    }));
+
+    return c.json({ success: true, devices: mapped });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
@@ -478,11 +486,181 @@ app.post('/users/:id/devices', async (c) => {
     }
 
     await pool.query(
-      'INSERT INTO devices (user_id, uid, name, device_code, mode, firmware_version, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)',
+      'INSERT INTO devices (user_id, uid, name, device_code, mode, firmware_version, status, is_active) VALUES (?, ?, ?, ?, ?, ?, "verified", 1)',
       [userId, userUid, name.trim(), trimmedCode, mode || 'AUTO', firmware_version || '1.0.0']
     );
 
     return c.json({ success: true, message: 'Perangkat ESP32 berhasil ditambahkan.' });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// POST /api/auth/users/:id/devices/request-verify
+app.post('/users/:id/devices/request-verify', async (c) => {
+  try {
+    const userId = c.req.param('id');
+    const body = await c.req.json();
+    const { serial_code, device_code, name } = body;
+
+    const trimmedSerial = (serial_code || '').trim();
+    const trimmedCode = (device_code || '').trim().toUpperCase();
+
+    if (!trimmedSerial && !trimmedCode) {
+      return c.json({ success: false, message: 'Nomor seri (serial_code) atau kode perangkat (device_code) wajib diisi.' }, 400);
+    }
+
+    // Check if device is currently connected to WebSocket
+    const isOnline = isDeviceSocketConnected(trimmedSerial) || isDeviceSocketConnected(trimmedCode);
+    if (!isOnline) {
+      return c.json({
+        success: false,
+        is_offline: true,
+        message: `Perangkat ESP32 ("${trimmedSerial || trimmedCode}") saat ini sedang OFFLINE / Belum terhubung ke WebSocket. Hubungkan ESP32 ke Wi-Fi terlebih dahulu sebelum meminta verifikasi kedip.`,
+      }, 400);
+    }
+
+    // Generate random confirmation code between 1 and 8
+    const confirmationCode = Math.floor(Math.random() * 8) + 1;
+
+    // Get user UID
+    const [uRows]: any = await pool.query('SELECT uid FROM users WHERE id = ?', [userId]);
+    const userUid = uRows[0]?.uid || `USR-${String(userId).padStart(4, '0')}`;
+
+    // Find existing device by serial_code or device_code
+    const [existing]: any = await pool.query(
+      'SELECT * FROM devices WHERE (serial_code = ? AND serial_code IS NOT NULL AND serial_code != "") OR (device_code = ? AND device_code IS NOT NULL AND device_code != "") LIMIT 1',
+      [trimmedSerial, trimmedCode]
+    );
+
+    let deviceId = null;
+    let actualCode = trimmedCode || `ESP-${Date.now().toString().slice(-6)}`;
+
+    if (existing.length > 0) {
+      const dev = existing[0];
+      if (dev.status === 'verified' && dev.user_id) {
+        return c.json({
+          success: false,
+          is_already_added: true,
+          message: 'ESP32 dengan nomor seri ini sudah ditambahkan ke akun Anda.',
+        }, 400);
+      }
+      deviceId = dev.id;
+      actualCode = dev.device_code;
+      await pool.query(`
+        UPDATE devices
+        SET confirmation_code = ?,
+            status = 'unverified',
+            blink_pending = 1,
+            serial_code = COALESCE(?, serial_code),
+            name = COALESCE(?, name)
+        WHERE id = ?
+      `, [confirmationCode, trimmedSerial || null, name ? name.trim() : null, dev.id]);
+    } else {
+      const [insertRes]: any = await pool.query(`
+        INSERT INTO devices (user_id, uid, name, device_code, serial_code, confirmation_code, status, blink_pending, mode, firmware_version, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 'unverified', 1, 'AUTO', 'v2.0.0', 1)
+      `, [
+        userId,
+        userUid,
+        name ? name.trim() : `ESP32 (${actualCode})`,
+        actualCode,
+        trimmedSerial || null,
+        confirmationCode
+      ]);
+      deviceId = insertRes.insertId;
+    }
+
+    // Push instant blink signal via WebSocket
+    sendBlinkToDevice(actualCode, trimmedSerial, confirmationCode, 4);
+
+    return c.json({
+      success: true,
+      message: 'Sinyal verifikasi dikirim ke ESP32 secara instan via WebSocket / Polling.',
+      device_id: deviceId,
+      device_code: actualCode,
+      serial_code: trimmedSerial,
+      confirmation_code: confirmationCode,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// POST /api/auth/users/:id/devices/confirm-verify
+app.post('/users/:id/devices/confirm-verify', async (c) => {
+  try {
+    const userId = c.req.param('id');
+    const body = await c.req.json();
+    const { device_id, input_code, name, serial_code, device_code } = body;
+
+    if (!input_code) {
+      return c.json({ success: false, message: 'Angka kedipan konfirmasi (1-8) wajib diisi.' }, 400);
+    }
+
+    const enteredNumber = parseInt(input_code.toString().trim(), 10);
+    if (isNaN(enteredNumber) || enteredNumber < 1 || enteredNumber > 8) {
+      return c.json({ success: false, message: 'Angka konfirmasi harus antara 1 sampai 8.' }, 400);
+    }
+
+    let query = 'SELECT * FROM devices WHERE id = ? LIMIT 1';
+    let params: any[] = [device_id];
+
+    if (!device_id && (serial_code || device_code)) {
+      query = 'SELECT * FROM devices WHERE serial_code = ? OR device_code = ? LIMIT 1';
+      params = [serial_code || '', device_code || ''];
+    }
+
+    const [devices]: any = await pool.query(query, params);
+    if (devices.length === 0) {
+      return c.json({ success: false, message: 'Perangkat tidak ditemukan.' }, 404);
+    }
+
+    const device = devices[0];
+
+    // Check if code matches
+    if (device.confirmation_code !== enteredNumber) {
+      return c.json({
+        success: false,
+        message: 'Angka konfirmasi salah! Jumlah kedipan LED tidak sesuai. Silakan perhatikan kedipan modul ESP32 kembali.',
+      }, 400);
+    }
+
+    // Get user UID
+    const [uRows]: any = await pool.query('SELECT uid FROM users WHERE id = ?', [userId]);
+    const userUid = uRows[0]?.uid || `USR-${String(userId).padStart(4, '0')}`;
+
+    // Generate unique permanent auth_code (e.g. AUTH-A1B2C3D4E5F6)
+    const generatedAuthCode = device.auth_code || `AUTH-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+
+    // Mark as verified & assign to user
+    await pool.query(`
+      UPDATE devices
+      SET user_id = ?,
+          uid = ?,
+          name = COALESCE(?, name),
+          auth_code = ?,
+          status = 'verified',
+          blink_pending = 0
+      WHERE id = ?
+    `, [userId, userUid, name ? name.trim() : null, generatedAuthCode, device.id]);
+
+    // Push instant auth_approved to ESP32 via WebSocket
+    sendAuthApprovedToDevice(device.device_code, device.serial_code, generatedAuthCode);
+
+    return c.json({
+      success: true,
+      message: 'Perangkat ESP32 berhasil diverifikasi dan ditambahkan ke akun Anda!',
+      device: {
+        id: device.id,
+        uid: userUid,
+        name: name ? name.trim() : device.name,
+        device_code: device.device_code,
+        serial_code: device.serial_code,
+        auth_code: generatedAuthCode,
+        status: 'verified',
+      },
+    });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
@@ -515,6 +693,44 @@ app.put('/users/:id/devices/:deviceId', async (c) => {
     );
 
     return c.json({ success: true, message: 'Perangkat berhasil diperbarui.' });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// POST /api/auth/users/:id/devices/:deviceId/led-control
+app.post('/users/:id/devices/:deviceId/led-control', async (c) => {
+  try {
+    const userId = c.req.param('id');
+    const deviceId = c.req.param('deviceId');
+    const body = await c.req.json();
+    const { state = 'BLINK', gpio = 4, duration = 0 } = body;
+
+    const [devices]: any = await pool.query(
+      'SELECT * FROM devices WHERE id = ? AND (user_id = ? OR user_id IS NULL)',
+      [deviceId, userId]
+    );
+
+    if (devices.length === 0) {
+      return c.json({ success: false, message: 'Perangkat tidak ditemukan.' }, 404);
+    }
+
+    const dev = devices[0];
+    const identifier = dev.device_code || dev.serial_code;
+
+    const wsSent = sendLedControlToDevice(dev.device_code, dev.serial_code, state, Number(gpio), Number(duration));
+    if (!wsSent) {
+      return c.json({
+        success: false,
+        is_offline: true,
+        message: `Perangkat ESP32 (${dev.name || dev.device_code}) sedang offline / tidak terhubung ke WebSocket. Hubungkan ESP32 ke internet terlebih dahulu.`,
+      }, 400);
+    }
+
+    return c.json({
+      success: true,
+      message: `Sinyal LED ${state} (GPIO ${gpio}) berhasil dikirim ke ${dev.name || identifier} via WebSocket!`,
+    });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }

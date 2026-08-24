@@ -1,19 +1,62 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { PlayCircle, Wifi, WifiOff, Clock, Cpu, CheckCircle2, AlertCircle, RefreshCw, XCircle } from 'lucide-react';
+import { PlayCircle, Wifi, WifiOff, Clock, Cpu, CheckCircle2, AlertCircle, RefreshCw, XCircle, Zap } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { goeyToast } from 'goey-toast';
+
+// Asia/Jakarta (WIB) Time Formatter
+const formatWibTime = (dateStr) => {
+  if (!dateStr) return '-';
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date(dateStr));
+  } catch (_) {
+    return new Date(dateStr).toLocaleTimeString('id-ID');
+  }
+};
+
+const formatWibFull = (dateStr) => {
+  if (!dateStr) return '-';
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date(dateStr)) + ' WIB';
+  } catch (_) {
+    return new Date(dateStr).toLocaleTimeString('id-ID');
+  }
+};
 
 export const DemoView = ({ apiUrl }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [commandSending, setCommandSending] = useState(false);
-  const [notice, setNotice] = useState(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+
+  // Real-time WebSocket connection state
+  const [wsOnlineDevices, setWsOnlineDevices] = useState(new Set());
+  const [isWsConnected, setIsWsConnected] = useState(false);
 
   const fetchDemoData = async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/demo`);
-      const json = await res.json();
+      const { data: resData, error: actionError } = await actions.getDemo();
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/demo')).json();
       if (json.success) {
         setData(json);
+        if (json.devices && json.devices.length > 0) {
+          setSelectedDeviceId((prev) => {
+            const exists = json.devices.some((d) => d.id === prev);
+            return exists ? prev : json.devices[0].id;
+          });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -25,20 +68,100 @@ export const DemoView = ({ apiUrl }) => {
   useEffect(() => {
     fetchDemoData();
     const interval = setInterval(fetchDemoData, 3000);
-    return () => clearInterval(interval);
+
+    let ws;
+    let reconnectTimer;
+    const connectWs = () => {
+      try {
+        const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+        ws = new WebSocket(`ws://${host}:3001/ws/dashboard`);
+        
+        ws.onopen = () => {
+          setIsWsConnected(true);
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'DEVICES_ONLINE_SNAPSHOT') {
+              setWsOnlineDevices(new Set(msg.online_devices || []));
+            } else if (msg.type === 'DEVICE_STATUS') {
+              setWsOnlineDevices((prev) => {
+                const next = new Set(prev);
+                if (msg.is_online) {
+                  if (msg.device_code) next.add(msg.device_code);
+                  if (msg.serial_code) next.add(msg.serial_code);
+                } else {
+                  if (msg.device_code) next.delete(msg.device_code);
+                  if (msg.serial_code) next.delete(msg.serial_code);
+                }
+                return next;
+              });
+
+              // Live update last_seen and is_online in state
+              setData((prevData) => {
+                if (!prevData) return prevData;
+                const updateDeviceObj = (d) =>
+                  d.device_code === msg.device_code || d.serial_code === msg.serial_code
+                    ? { ...d, last_seen: msg.last_seen || new Date().toISOString(), is_online: msg.is_online }
+                    : d;
+
+                return {
+                  ...prevData,
+                  device: prevData.device ? updateDeviceObj(prevData.device) : null,
+                  devices: Array.isArray(prevData.devices) ? prevData.devices.map(updateDeviceObj) : [],
+                };
+              });
+            } else if (['COMMAND_STATUS', 'COMMAND_NEW'].includes(msg.type)) {
+              fetchDemoData();
+            }
+          } catch (_) {}
+        };
+
+        ws.onclose = () => {
+          setIsWsConnected(false);
+          reconnectTimer = setTimeout(connectWs, 3000);
+        };
+
+        ws.onerror = () => {
+          setIsWsConnected(false);
+        };
+      } catch (_) {}
+    };
+
+    connectWs();
+
+    return () => {
+      clearInterval(interval);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) try { ws.close(); } catch (_) {}
+    };
   }, [apiUrl]);
 
+  const deviceList = data?.devices && data.devices.length > 0 ? data.devices : (data?.device ? [data.device] : []);
+  const selectedDevice = deviceList.find((d) => d.id === selectedDeviceId) || deviceList[0] || null;
+
+  const isDeviceOnline = (dev) => {
+    if (!dev) return false;
+    return (
+      (dev.device_code && wsOnlineDevices.has(dev.device_code)) ||
+      (dev.serial_code && wsOnlineDevices.has(dev.serial_code)) ||
+      Boolean(dev.is_online)
+    );
+  };
+
+  const currentDeviceOnline = isDeviceOnline(selectedDevice);
+
   const handleSendCommand = async (valveId, command, durationSeconds) => {
-    if (!data?.device) return;
+    if (!selectedDevice) return;
 
     try {
       setCommandSending(true);
-      setNotice(null);
-      const res = await fetch(`${apiUrl}/api/demo/command`, {
+      const res = await fetch('/api/demo/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          device_id: data.device.id,
+          device_id: selectedDevice.id,
           valve_id: valveId,
           command,
           duration_seconds: durationSeconds,
@@ -46,13 +169,13 @@ export const DemoView = ({ apiUrl }) => {
       });
       const json = await res.json();
       if (json.success) {
-        setNotice({ type: 'success', text: json.message });
+        goeyToast.success(json.message || 'Perintah berhasil dikirim ke ESP32');
         fetchDemoData();
       } else {
-        setNotice({ type: 'error', text: json.message || 'Gagal mengirim perintah' });
+        goeyToast.error(json.message || 'Gagal mengirim perintah');
       }
     } catch (err) {
-      setNotice({ type: 'error', text: 'Gagal terhubung ke API server' });
+      goeyToast.error('Gagal terhubung ke API server');
     } finally {
       setCommandSending(false);
     }
@@ -73,44 +196,61 @@ export const DemoView = ({ apiUrl }) => {
         </div>
         <button
           onClick={fetchDemoData}
-          className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 text-sm font-semibold transition border border-emerald-200 shadow-sm"
+          className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-800 text-sm font-semibold transition border border-emerald-200 shadow-sm cursor-pointer"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           <span>Refresh Realtime</span>
         </button>
       </div>
 
-      {notice && (
-        <div className={`px-4 py-3 rounded-2xl text-sm flex items-center space-x-2 shadow-sm ${
-          notice.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
-
-      {/* ESP Device Status Card */}
+      {/* ESP Device Status Card with Selector */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm shadow-emerald-950/5">
-        <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4 flex items-center space-x-2">
-          <Cpu className="w-4 h-4 text-emerald-600" />
-          <span>Status Perangkat ESP32</span>
-        </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+          <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center space-x-2">
+            <Cpu className="w-4 h-4 text-emerald-600" />
+            <span>Status Perangkat ESP32</span>
+          </h3>
 
-        {data?.device ? (
+          {/* Multiple Devices Selector Dropdown */}
+          {deviceList.length > 1 && (
+            <div className="flex items-center space-x-2">
+              <label htmlFor="device-select" className="text-xs font-bold text-slate-500">
+                Pilih Perangkat:
+              </label>
+              <select
+                id="device-select"
+                value={selectedDeviceId || ''}
+                onChange={(e) => setSelectedDeviceId(Number(e.target.value))}
+                className="px-3 py-1.5 bg-emerald-50/70 border border-emerald-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer shadow-xs"
+              >
+                {deviceList.map((d) => {
+                  const online = isDeviceOnline(d);
+                  return (
+                    <option key={d.id} value={d.id}>
+                      {d.name || d.device_code} ({d.device_code}) — {online ? '🟢 Online' : '⚪ Offline'}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {selectedDevice ? (
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100">
               <span className="text-xs text-slate-500 font-semibold">Device Name</span>
-              <p className="text-base font-bold text-slate-900 mt-1">{data.device.name}</p>
-              <p className="text-xs font-mono text-slate-500 mt-0.5">{data.device.device_code}</p>
+              <p className="text-base font-bold text-slate-900 mt-1">{selectedDevice.name || 'ESP32 Device'}</p>
+              <p className="text-xs font-mono text-slate-500 mt-0.5">{selectedDevice.device_code || '-'}</p>
             </div>
 
             <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100">
               <span className="text-xs text-slate-500 font-semibold">Konektivitas</span>
               <div className="mt-1">
-                {data.device.is_online ? (
+                {currentDeviceOnline ? (
                   <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                     <Wifi className="w-3.5 h-3.5" />
-                    <span>ONLINE</span>
+                    <span>ONLINE (Live WS)</span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
@@ -123,13 +263,13 @@ export const DemoView = ({ apiUrl }) => {
 
             <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100">
               <span className="text-xs text-slate-500 font-semibold">Mode Operasional</span>
-              <p className="text-base font-bold text-emerald-700 mt-1">{data.device.mode || 'AUTO'}</p>
+              <p className="text-base font-bold text-emerald-700 mt-1">{selectedDevice.mode || 'AUTO'}</p>
             </div>
 
             <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100">
               <span className="text-xs text-slate-500 font-semibold">Heartbeat Terakhir</span>
               <p className="text-base font-bold text-slate-800 mt-1">
-                {data.device.last_seen ? new Date(data.device.last_seen).toLocaleTimeString('id-ID') : '-'}
+                {formatWibFull(selectedDevice.last_seen)}
               </p>
             </div>
           </div>
@@ -145,10 +285,10 @@ export const DemoView = ({ apiUrl }) => {
           <span>Pengujian Valve Manual</span>
         </h3>
 
-        {data?.device && !data.device.is_online && (
+        {selectedDevice && !currentDeviceOnline && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-2xl text-xs font-medium flex items-center space-x-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-            <span>ESP32 saat ini sedang offline. Perintah demo akan disimpan sebagai PENDING dan expired setelah 30 detik jika tidak di-claim.</span>
+            <span>ESP32 ({selectedDevice.name || selectedDevice.device_code}) saat ini sedang offline. Hubungkan ESP32 ke internet untuk eksekusi instan.</span>
           </div>
         )}
 
@@ -175,28 +315,28 @@ export const DemoView = ({ apiUrl }) => {
                 <button
                   onClick={() => handleSendCommand(valve.id, 'TEST_OPEN', 5)}
                   disabled={commandSending}
-                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-2 px-3 rounded-xl text-xs transition"
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer"
                 >
                   Buka 5 Detik
                 </button>
                 <button
                   onClick={() => handleSendCommand(valve.id, 'TEST_OPEN', 10)}
                   disabled={commandSending}
-                  className="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold py-2 px-3 rounded-xl text-xs transition"
+                  className="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer"
                 >
                   Buka 10 Detik
                 </button>
                 <button
                   onClick={() => handleSendCommand(valve.id, 'TEST_OPEN', 30)}
                   disabled={commandSending}
-                  className="bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 font-bold py-2 px-3 rounded-xl text-xs transition"
+                  className="bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer"
                 >
                   Buka 30 Detik
                 </button>
                 <button
                   onClick={() => handleSendCommand(valve.id, 'CLOSE')}
                   disabled={commandSending}
-                  className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold py-2 px-3 rounded-xl text-xs transition"
+                  className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold py-2 px-3 rounded-xl text-xs transition cursor-pointer"
                 >
                   Tutup Sekarang
                 </button>
@@ -208,13 +348,13 @@ export const DemoView = ({ apiUrl }) => {
 
       {/* Command History Table */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm shadow-emerald-950/5">
-        <h3 className="text-lg font-bold text-slate-900 mb-4">Riwayat Eksekusi Perintah Demo</h3>
+        <h3 className="text-lg font-bold text-slate-900 mb-4">Riwayat Eksekusi Perintah Demo (WIB)</h3>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="border-b border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider bg-slate-50/50">
-                <th className="py-3 px-4 rounded-l-xl">Waktu Kirim</th>
+                <th className="py-3 px-4 rounded-l-xl">Waktu Kirim (WIB)</th>
                 <th className="py-3 px-4">Target Valve</th>
                 <th className="py-3 px-4">Perintah</th>
                 <th className="py-3 px-4">Durasi Target</th>
@@ -226,7 +366,7 @@ export const DemoView = ({ apiUrl }) => {
                 data.commands.map((cmd) => (
                   <tr key={cmd.id} className="hover:bg-emerald-50/40 transition-colors">
                     <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
-                      {new Date(cmd.created_at).toLocaleTimeString('id-ID')}
+                      {formatWibTime(cmd.created_at)} WIB
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-slate-800">{cmd.valve_name}</td>
                     <td className="py-3.5 px-4 font-bold text-slate-900 font-mono text-xs">{cmd.command}</td>

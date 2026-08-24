@@ -71,38 +71,119 @@ app.get('/fertigation/schedule', async (c) => {
 app.post('/device/heartbeat', async (c) => {
   try {
     const body = await c.req.json();
-    const { device_code, mode, current_hst, ip_address, firmware_version } = body;
+    const { device_code, serial_code, mode, current_hst, ip_address, firmware_version } = body;
 
-    if (!device_code) {
-      return c.json({ success: false, message: 'device_code wajib diisi.' }, 400);
+    if (!device_code && !serial_code) {
+      return c.json({ success: false, message: 'device_code atau serial_code wajib diisi.' }, 400);
     }
 
-    const [devices]: any = await pool.query('SELECT * FROM devices WHERE device_code = ?', [device_code]);
+    const [devices]: any = await pool.query(
+      'SELECT * FROM devices WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL) LIMIT 1',
+      [device_code || '', serial_code || '']
+    );
+
+    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
     if (devices.length === 0) {
-      return c.json({ success: false, message: 'Device tidak ditemukan.' }, 404);
+      // Auto-register unregistered device
+      const [insertRes]: any = await pool.query(`
+        INSERT INTO devices (name, device_code, serial_code, mode, current_hst, last_seen, ip_address, firmware_version, status, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unverified', 1)
+      `, [
+        `ESP32 (${(device_code || serial_code).slice(-6)})`,
+        device_code || `ESP-${Date.now().toString().slice(-6)}`,
+        serial_code || null,
+        mode || 'AUTO',
+        current_hst || null,
+        nowStr,
+        ip_address || null,
+        firmware_version || null
+      ]);
+
+      return c.json({
+        success: true,
+        server_time: nowStr,
+        device: { id: insertRes.insertId, mode: mode || 'AUTO' },
+        should_blink: false,
+        blink_count: 0,
+      });
     }
 
     const device = devices[0];
-    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const shouldBlink = device.blink_pending === 1;
 
     await pool.query(`
       UPDATE devices
-      SET last_seen = ?,
+      SET last_seen = NOW(),
+          serial_code = COALESCE(?, serial_code),
           mode = COALESCE(?, mode),
           current_hst = COALESCE(?, current_hst),
           ip_address = COALESCE(?, ip_address),
-          firmware_version = COALESCE(?, firmware_version)
+          firmware_version = COALESCE(?, firmware_version),
+          blink_pending = 0
       WHERE id = ?
-    `, [nowStr, mode || null, current_hst || null, ip_address || null, firmware_version || null, device.id]);
+    `, [serial_code || null, mode || null, current_hst || null, ip_address || null, firmware_version || null, device.id]);
 
     return c.json({
       success: true,
-      server_time: nowStr,
+      server_time: new Date().toISOString(),
       device: {
         id: device.id,
         name: device.name,
         mode: mode || device.mode,
+        status: device.status || 'verified',
       },
+      verified: device.status === 'verified' && !!device.auth_code,
+      auth_code: device.auth_code || null,
+      should_blink: shouldBlink,
+      blink_count: device.confirmation_code || 0,
+      blink_gpio: 4,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// GET /api/device/blink-check
+app.get('/device/blink-check', async (c) => {
+  try {
+    const device_code = c.req.query('device_code');
+    const serial_code = c.req.query('serial_code');
+
+    if (!device_code && !serial_code) {
+      return c.json({ success: false, should_blink: false, verified: false });
+    }
+
+    const [devices]: any = await pool.query(
+      'SELECT * FROM devices WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL) LIMIT 1',
+      [device_code || '', serial_code || '']
+    );
+
+    if (devices.length === 0) {
+      return c.json({ success: false, should_blink: false, verified: false });
+    }
+
+    const device = devices[0];
+    const isVerified = device.status === 'verified' && !!device.auth_code;
+    const shouldBlink = device.blink_pending === 1;
+
+    // Update last_seen to NOW() whenever ESP32 polls
+    await pool.query('UPDATE devices SET last_seen = NOW() WHERE id = ?', [device.id]);
+
+    if (shouldBlink) {
+      await pool.query('UPDATE devices SET blink_pending = 0 WHERE id = ?', [device.id]);
+    }
+
+    return c.json({
+      success: true,
+      verified: isVerified,
+      auth_code: device.auth_code || null,
+      should_blink: shouldBlink,
+      blink_count: device.confirmation_code || 0,
+      blink_gpio: 4,
+      device_code: device.device_code,
+      serial_code: device.serial_code,
+      status: device.status || 'unverified',
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);

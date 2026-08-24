@@ -13,14 +13,49 @@ import { UsersView } from './UsersView';
 import { WaBotView } from './WaBotView';
 import { AdminCenterView } from './AdminCenterView';
 import { UserSettingsView } from './UserSettingsView';
+import { Cpu, Plus } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { GoeyToaster } from 'goey-toast';
+import 'goey-toast/styles.css';
 
 export const App = () => {
   const [user, setUser] = useState(null);
   const [authView, setAuthView] = useState('login'); // 'login' | 'register'
   const [activeTab, setActiveTab] = useState('dashboard');
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [userDevices, setUserDevices] = useState([]);
+  const [loadingUserDevices, setLoadingUserDevices] = useState(false);
 
   const apiUrl = import.meta.env.PUBLIC_API_URL || '';
+
+  const fetchUserDevices = async (userId) => {
+    if (!userId) return;
+    try {
+      setLoadingUserDevices(true);
+      const { data: resData, error: actionError } = await actions.getDevices({ userId });
+      if (!actionError && resData && resData.success) {
+        setUserDevices(resData.devices || []);
+      } else {
+        const res = await fetch(`/api/auth/users/${userId}/devices`);
+        const json = await res.json();
+        if (json.success) setUserDevices(json.devices || []);
+      }
+    } catch (err) {
+      try {
+        const res = await fetch(`/api/auth/users/${userId}/devices`);
+        const json = await res.json();
+        if (json.success) setUserDevices(json.devices || []);
+      } catch (_) {}
+    } finally {
+      setLoadingUserDevices(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id && user?.level !== 'admin') {
+      fetchUserDevices(user.id);
+    }
+  }, [user?.id, user?.level, activeTab]);
 
   // Helper to sync tab with current URL pathname
   const syncRouteFromPath = (currentUser) => {
@@ -176,6 +211,8 @@ export const App = () => {
     );
   }
 
+  const hasVerifiedDevice = userDevices.some((d) => d.status === 'verified');
+
   const isAdminPage = activeTab === 'admin' || user?.level === 'admin';
 
   return (
@@ -188,7 +225,31 @@ export const App = () => {
       {/* Main Content Area */}
       <div className={`flex-1 flex flex-col transition-all duration-300 min-h-screen ${isAdminPage ? '' : 'md:pl-16 lg:pl-56'}`}>
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {activeTab === 'dashboard' && user?.level !== 'admin' && <DashboardView apiUrl={apiUrl} setActiveTab={handleSelectTab} />}
+          {/* Global reminder banner when no verified ESP32 device is registered */}
+          {!hasVerifiedDevice && user?.level !== 'admin' && activeTab !== 'settings' && (
+            <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-start space-x-3.5">
+                <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl shrink-0 mt-0.5 sm:mt-0">
+                  <Cpu className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-amber-900">Perangkat ESP32 Belum Ditambahkan</h4>
+                  <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                    Tambahkan perangkat terlebih dahulu untuk mulai memantau telemetri sensor, mengatur jadwal penyiraman, dan mengontrol valve fertigasi.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => handleSelectTab('settings')}
+                className="shrink-0 bg-[#7BAF5A] hover:bg-[#689849] text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Perangkat Sekarang</span>
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'dashboard' && user?.level !== 'admin' && <DashboardView apiUrl={apiUrl} setActiveTab={handleSelectTab} hasDevice={hasVerifiedDevice} />}
           {activeTab === 'schedules' && <SchedulesView apiUrl={apiUrl} />}
           {activeTab === 'phases' && <GrowthPhasesView apiUrl={apiUrl} />}
           {activeTab === 'demo' && <DemoView apiUrl={apiUrl} />}
@@ -217,6 +278,7 @@ export const App = () => {
           ) : null}
         </main>
       </div>
+      <GoeyToaster position="top-right" richColors />
     </div>
   );
 };

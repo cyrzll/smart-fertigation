@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { 
-  Users, Plus, Trash2, Shield, User, CheckCircle2, AlertCircle, Phone, AtSign,
+  Users, Plus, Trash2, Shield, User, Phone, AtSign,
   Smartphone, Clock, RefreshCw, Send, Check, Edit2, Save, X
 } from 'lucide-react';
+import { actions } from 'astro:actions';
 import api from '../lib/axios';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const UsersView = () => {
   const [users, setUsers] = useState([]);
@@ -16,7 +19,6 @@ export const UsersView = () => {
   const [password, setPassword] = useState('');
   const [level, setLevel] = useState('user');
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState(null);
 
   const [selectedUser, setSelectedUser] = useState(null);
   const [newWaPhone, setNewWaPhone] = useState('');
@@ -27,12 +29,23 @@ export const UsersView = () => {
   const [editingUserId, setEditingUserId] = useState(null);
   const [editingPhone, setEditingPhone] = useState('');
 
+  // Delete Confirm Modal States
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState(null);
+  const [confirmDeleteWa, setConfirmDeleteWa] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(false);
+  const [deletingWa, setDeletingWa] = useState(false);
+
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/api/auth/users');
-      if (res.data.success) {
-        setUsers(res.data.users);
+      const { data: resData, error: actionError } = await actions.getUsers();
+      if (!actionError && resData && resData.success) {
+        setUsers(resData.users);
+      } else {
+        const res = await api.get('/api/auth/users');
+        if (res.data.success) {
+          setUsers(res.data.users);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -51,10 +64,10 @@ export const UsersView = () => {
 
     try {
       setSubmitting(true);
-      setNotice(null);
-      const res = await api.post('/api/auth/users', { name, username, email, phone, password, level });
-      if (res.data.success) {
-        setNotice({ type: 'success', text: res.data.message });
+      const payload = { name, username, email, phone, password, level };
+      const { data: resData, error: actionError } = await actions.createUser(payload);
+      if (!actionError && resData?.success) {
+        goeyToast.success(resData.message || 'Pengguna berhasil ditambahkan!');
         setName('');
         setUsername('');
         setEmail('');
@@ -62,11 +75,22 @@ export const UsersView = () => {
         setPassword('');
         fetchUsers();
       } else {
-        setNotice({ type: 'error', text: res.data.message || 'Gagal menambah pengguna' });
+        const res = await api.post('/api/auth/users', payload);
+        if (res.data.success) {
+          goeyToast.success(res.data.message || 'Pengguna berhasil ditambahkan!');
+          setName('');
+          setUsername('');
+          setEmail('');
+          setPhone('');
+          setPassword('');
+          fetchUsers();
+        } else {
+          goeyToast.error(res.data.message || 'Gagal menambah pengguna');
+        }
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Gagal terhubung ke server';
-      setNotice({ type: 'error', text: msg });
+      goeyToast.error(msg);
     } finally {
       setSubmitting(false);
     }
@@ -76,29 +100,34 @@ export const UsersView = () => {
     try {
       const res = await api.put(`/api/auth/users/${userId}`, { phone: editingPhone });
       if (res.data.success) {
-        setNotice({ type: 'success', text: 'Nomor HP diperbarui.' });
+        goeyToast.success('Nomor HP berhasil diperbarui');
         setEditingUserId(null);
         fetchUsers();
       } else {
-        setNotice({ type: 'error', text: res.data.message });
+        goeyToast.error(res.data.message || 'Gagal memperbarui nomor HP');
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Gagal memperbarui nomor HP.';
-      setNotice({ type: 'error', text: msg });
+      goeyToast.error(msg);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus akun ini?')) return;
+  const handleDeleteUserConfirm = async () => {
+    if (!confirmDeleteUserId) return;
     try {
-      const res = await api.delete(`/api/auth/users/${id}`);
+      setDeletingUser(true);
+      const res = await api.delete(`/api/auth/users/${confirmDeleteUserId}`);
       if (res.data.success) {
+        goeyToast.success('Akun user berhasil dihapus!');
+        setConfirmDeleteUserId(null);
         fetchUsers();
       } else {
-        alert(res.data.message);
+        goeyToast.error(res.data.message || 'Gagal menghapus user');
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal menghapus user');
+    } finally {
+      setDeletingUser(false);
     }
   };
 
@@ -108,15 +137,15 @@ export const UsersView = () => {
       setAddingWa(true);
       const res = await api.post(`/api/auth/users/${userId}/wa-numbers`, { phone: newWaPhone });
       if (res.data.success) {
-        setNotice({ type: 'success', text: res.data.message });
+        goeyToast.success(res.data.message || 'Nomor WhatsApp ditambahkan, kode OTP telah dikirim!');
         setNewWaPhone('');
         fetchUsers();
       } else {
-        setNotice({ type: 'error', text: res.data.message });
+        goeyToast.error(res.data.message || 'Gagal menambah nomor WhatsApp');
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Gagal menambah nomor WhatsApp.';
-      setNotice({ type: 'error', text: msg });
+      goeyToast.error(msg);
     } finally {
       setAddingWa(false);
     }
@@ -146,26 +175,34 @@ export const UsersView = () => {
     try {
       const res = await api.post(`/api/auth/users/${userId}/wa-numbers/${numberId}/resend`);
       if (res.data.success) {
-        setNotice({ type: 'success', text: res.data.message });
+        goeyToast.success(res.data.message || 'Kode OTP berhasil dikirim ulang!');
         fetchUsers();
       } else {
-        setNotice({ type: 'error', text: res.data.message });
+        goeyToast.error(res.data.message || 'Gagal mengirim ulang OTP');
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Gagal mengirim ulang OTP.';
-      setNotice({ type: 'error', text: msg });
+      goeyToast.error(msg);
     }
   };
 
-  const handleDeleteWaNumber = async (userId, numberId) => {
-    if (!confirm('Yakin ingin menghapus nomor WhatsApp ini?')) return;
+  const handleDeleteWaConfirm = async () => {
+    if (!confirmDeleteWa) return;
     try {
+      setDeletingWa(true);
+      const { userId, numberId } = confirmDeleteWa;
       const res = await api.delete(`/api/auth/users/${userId}/wa-numbers/${numberId}`);
       if (res.data.success) {
+        goeyToast.success('Nomor WhatsApp berhasil dihapus!');
+        setConfirmDeleteWa(null);
         fetchUsers();
+      } else {
+        goeyToast.error(res.data.message || 'Gagal menghapus nomor WhatsApp');
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal menghapus nomor WhatsApp');
+    } finally {
+      setDeletingWa(false);
     }
   };
 
@@ -179,15 +216,6 @@ export const UsersView = () => {
       className="space-y-5"
     >
       <h2 className="text-xl font-bold text-[#2D3B2D]">Manajemen User</h2>
-
-      {notice && (
-        <div className={`px-4 py-3 rounded-xl text-sm flex items-center space-x-2 border ${
-          notice.type === 'success' ? 'border-[#C8D9B0] text-[#3A6B2A]' : 'border-red-300 text-red-600'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
 
       {/* Add User Form */}
       <div className="bg-white border border-[#D4DFC8] rounded-xl p-5">
@@ -306,8 +334,9 @@ export const UsersView = () => {
                     </span>
                   )}
                   <button
-                    onClick={() => handleDelete(u.id)}
-                    className="p-1.5 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition"
+                    onClick={() => setConfirmDeleteUserId(u.id)}
+                    className="p-1.5 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 transition cursor-pointer"
+                    title="Hapus Akun User"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -325,7 +354,7 @@ export const UsersView = () => {
                   {selectedUser !== u.id && (!u.waNumbers || u.waNumbers.length < 3) && (
                     <button
                       onClick={() => setSelectedUser(u.id)}
-                      className="inline-flex items-center space-x-1 text-xs font-medium text-[#5A8A3A] hover:text-[#3A6B2A] border border-[#C8D9B0] hover:border-[#7BAF5A] px-2.5 py-1 rounded-lg transition"
+                      className="inline-flex items-center space-x-1 text-xs font-medium text-[#5A8A3A] hover:text-[#3A6B2A] border border-[#C8D9B0] hover:border-[#7BAF5A] px-2.5 py-1 rounded-lg transition cursor-pointer"
                     >
                       <Plus className="w-3 h-3" />
                       <span>Tambah</span>
@@ -351,7 +380,7 @@ export const UsersView = () => {
                       <button
                         onClick={() => handleAddWaNumber(u.id)}
                         disabled={addingWa}
-                        className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3 py-2 rounded-lg text-xs transition flex items-center space-x-1 shrink-0"
+                        className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3 py-2 rounded-lg text-xs transition flex items-center space-x-1 shrink-0 cursor-pointer"
                       >
                         <Send className="w-3.5 h-3.5" />
                         <span>Kirim OTP</span>
@@ -394,17 +423,17 @@ export const UsersView = () => {
                               <button
                                 onClick={() => handleVerifyOtp(u.id, num.id)}
                                 disabled={verifyingOtp[num.id]}
-                                className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white text-[10px] font-medium px-2.5 py-1 rounded-lg transition shrink-0"
+                                className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white text-[10px] font-medium px-2.5 py-1 rounded-lg transition shrink-0 cursor-pointer"
                               >
                                 Verifikasi
                               </button>
                             </div>
                             <div className="flex items-center justify-between text-[10px]">
-                              <button onClick={() => handleResendOtp(u.id, num.id)} className="text-[#5A8A3A] hover:underline flex items-center space-x-0.5">
+                              <button onClick={() => handleResendOtp(u.id, num.id)} className="text-[#5A8A3A] hover:underline flex items-center space-x-0.5 cursor-pointer">
                                 <RefreshCw className="w-2.5 h-2.5" />
                                 <span>Kirim Ulang</span>
                               </button>
-                              <button onClick={() => handleDeleteWaNumber(u.id, num.id)} className="text-red-500 hover:underline">
+                              <button onClick={() => setConfirmDeleteWa({ userId: u.id, numberId: num.id })} className="text-red-500 hover:underline cursor-pointer">
                                 Hapus
                               </button>
                             </div>
@@ -414,7 +443,7 @@ export const UsersView = () => {
                         {num.status === 'verified' && (
                           <div className="pt-1.5 border-t border-[#E8EDE0] flex items-center justify-between text-[10px]">
                             <span className="text-[#5A8A3A] font-medium">ESP32 Active</span>
-                            <button onClick={() => handleDeleteWaNumber(u.id, num.id)} className="text-red-500 hover:underline">
+                            <button onClick={() => setConfirmDeleteWa({ userId: u.id, numberId: num.id })} className="text-red-500 hover:underline cursor-pointer">
                               Hapus
                             </button>
                           </div>
@@ -432,6 +461,32 @@ export const UsersView = () => {
           ))}
         </div>
       </div>
+
+      {/* Delete User Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(confirmDeleteUserId)}
+        title="Hapus Akun Pengguna"
+        message="Apakah Anda yakin ingin menghapus akun pengguna ini beserta seluruh data konfigurasi terkait?"
+        confirmText="Ya, Hapus Akun"
+        cancelText="Batal"
+        confirmVariant="danger"
+        loading={deletingUser}
+        onConfirm={handleDeleteUserConfirm}
+        onCancel={() => setConfirmDeleteUserId(null)}
+      />
+
+      {/* Delete WA Number Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(confirmDeleteWa)}
+        title="Hapus Nomor WhatsApp"
+        message="Apakah Anda yakin ingin menghapus nomor WhatsApp ini dari daftar akun pengguna?"
+        confirmText="Ya, Hapus Nomor"
+        cancelText="Batal"
+        confirmVariant="danger"
+        loading={deletingWa}
+        onConfirm={handleDeleteWaConfirm}
+        onCancel={() => setConfirmDeleteWa(null)}
+      />
     </motion.div>
   );
 };

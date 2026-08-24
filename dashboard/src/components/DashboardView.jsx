@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Sprout, Calendar, Clock, Cpu, ArrowRight, RefreshCw, CheckCircle2, Layers } from 'lucide-react';
+import { actions } from 'astro:actions';
 
 export const DashboardView = ({ apiUrl, setActiveTab }) => {
   const [data, setData] = useState(null);
@@ -11,15 +12,27 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`${apiUrl}/api/dashboard`);
-      const json = await res.json();
-      if (json.success) {
-        setData(json);
+
+      const { data: resData, error: actionError } = await actions.getDashboard();
+      if (actionError) {
+        throw new Error(actionError.message || 'Gagal memuat data');
+      }
+
+      if (resData && resData.success) {
+        setData(resData);
       } else {
-        setError(json.error || 'Gagal memuat data');
+        setError(resData?.error || resData?.message || 'Gagal memuat data');
       }
     } catch (err) {
-      setError('Gagal terhubung ke server.');
+      // Fallback to fetch
+      try {
+        const res = await fetch(`/api/dashboard`);
+        const json = await res.json();
+        if (json.success) setData(json);
+        else setError(json.error || 'Gagal memuat data');
+      } catch (_) {
+        setError('Gagal terhubung ke server.');
+      }
     } finally {
       setLoading(false);
     }

@@ -4,11 +4,15 @@ import { ShieldCheck, Users, MessageSquare, LogOut, RefreshCw, QrCode, Droplets 
 import { QRCodeSVG } from 'qrcode.react';
 import { UsersView } from './UsersView';
 import { WaBotView } from './WaBotView';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
   const [subTab, setSubTab] = useState('users');
   const [waStatus, setWaStatus] = useState(null);
   const [loadingWa, setLoadingWa] = useState(true);
+  const [showLogoutWaModal, setShowLogoutWaModal] = useState(false);
+  const [restartingWa, setRestartingWa] = useState(false);
 
   const fetchWaStatus = async () => {
     try {
@@ -30,16 +34,17 @@ export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
     return () => clearInterval(interval);
   }, [apiUrl]);
 
-  const handleLogoutWaSession = async () => {
-    if (!confirm('Yakin ingin logout sesi WhatsApp Bot?')) return;
+  const handleLogoutWaConfirm = async () => {
     try {
-      setLoadingWa(true);
+      setRestartingWa(true);
       await fetch(`${apiUrl}/api/wa/restart`, { method: 'POST' });
+      goeyToast.success('Sesi WhatsApp Bot berhasil di-logout / direstart');
+      setShowLogoutWaModal(false);
       fetchWaStatus();
     } catch (err) {
-      console.error('Error restarting WA session:', err);
+      goeyToast.error('Gagal me-logout sesi WhatsApp');
     } finally {
-      setLoadingWa(false);
+      setRestartingWa(false);
     }
   };
 
@@ -136,8 +141,8 @@ export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
                 <span>Refresh</span>
               </button>
               <button
-                onClick={handleLogoutWaSession}
-                className="border border-[#D4DFC8] text-[#5A6B5A] hover:border-red-300 hover:text-red-500 font-medium text-xs px-3.5 py-2 rounded-xl transition flex items-center space-x-1.5"
+                onClick={() => setShowLogoutWaModal(true)}
+                className="border border-[#D4DFC8] text-[#5A6B5A] hover:border-red-300 hover:text-red-500 font-medium text-xs px-3.5 py-2 rounded-xl transition flex items-center space-x-1.5 cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Reset Sesi</span>
@@ -167,6 +172,19 @@ export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
         {subTab === 'users' && <UsersView apiUrl={apiUrl} />}
         {subTab === 'wa' && <WaBotView apiUrl={apiUrl} />}
       </div>
+
+      {/* Reset Session Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showLogoutWaModal}
+        title="Reset Sesi WhatsApp Bot"
+        message="Apakah Anda yakin ingin me-reset dan me-logout sesi WhatsApp Bot ini?"
+        confirmText="Ya, Reset Sesi"
+        cancelText="Batal"
+        confirmVariant="warning"
+        loading={restartingWa}
+        onConfirm={handleLogoutWaConfirm}
+        onCancel={() => setShowLogoutWaModal(false)}
+      />
     </motion.div>
   );
 };

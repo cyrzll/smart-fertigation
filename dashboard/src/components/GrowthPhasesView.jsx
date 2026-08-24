@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Sprout, Plus, Edit2, Trash2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Sprout, Plus, Edit2, Trash2, RefreshCw } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const GrowthPhasesView = ({ apiUrl }) => {
   const [phases, setPhases] = useState([]);
@@ -9,13 +12,16 @@ export const GrowthPhasesView = ({ apiUrl }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState(null);
+
+  // Delete Confirm Modal State
+  const [deletingPhaseId, setDeletingPhaseId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchPhases = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${apiUrl}/api/growth-phases`);
-      const json = await res.json();
+      const { data: resData, error: actionError } = await actions.getGrowthPhases();
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/growth-phases')).json();
       if (json.success) {
         setPhases(json.phases);
       }
@@ -36,25 +42,35 @@ export const GrowthPhasesView = ({ apiUrl }) => {
 
     try {
       setSubmitting(true);
-      setNotice(null);
-      const url = editingId ? `${apiUrl}/api/growth-phases/${editingId}` : `${apiUrl}/api/growth-phases`;
-      const method = editingId ? 'PUT' : 'POST';
+      const payload = { name, description };
+      let resData = null;
+      let actionError = null;
 
-      const res = await fetch(url, {
-        method,
+      if (editingId) {
+        const res = await actions.updateGrowthPhase({ id: editingId, data: payload });
+        resData = res.data;
+        actionError = res.error;
+      } else {
+        const res = await actions.addGrowthPhase(payload);
+        resData = res.data;
+        actionError = res.error;
+      }
+
+      const json = (!actionError && resData) ? resData : await (await fetch(editingId ? `/api/growth-phases/${editingId}` : '/api/growth-phases', {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description }),
-      });
-      const json = await res.json();
+        body: JSON.stringify(payload),
+      })).json();
+
       if (json.success) {
-        setNotice({ type: 'success', text: json.message });
+        goeyToast.success(json.message || (editingId ? 'Fase pertumbuhan diperbarui!' : 'Fase pertumbuhan ditambahkan!'));
         resetForm();
         fetchPhases();
       } else {
-        setNotice({ type: 'error', text: json.message || 'Gagal menyimpan fase' });
+        goeyToast.error(json.message || 'Gagal menyimpan fase');
       }
     } catch (err) {
-      setNotice({ type: 'error', text: 'Gagal terhubung ke API server' });
+      goeyToast.error('Gagal terhubung ke API server');
     } finally {
       setSubmitting(false);
     }
@@ -66,18 +82,30 @@ export const GrowthPhasesView = ({ apiUrl }) => {
     setDescription(phase.description || '');
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus fase pertumbuhan ini?')) return;
+  const handleDeleteConfirm = async () => {
+    if (!deletingPhaseId) return;
     try {
-      const res = await fetch(`${apiUrl}/api/growth-phases/${id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (json.success) {
+      setDeleting(true);
+      const { data: resData, error: actionError } = await actions.deleteGrowthPhase({ id: deletingPhaseId });
+      if (!actionError && resData?.success) {
+        goeyToast.success(resData.message || 'Fase pertumbuhan berhasil dihapus!');
+        setDeletingPhaseId(null);
         fetchPhases();
       } else {
-        alert(json.message);
+        const res = await fetch(`/api/growth-phases/${deletingPhaseId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          goeyToast.success(json.message || 'Fase pertumbuhan berhasil dihapus!');
+          setDeletingPhaseId(null);
+          fetchPhases();
+        } else {
+          goeyToast.error(json.message || 'Gagal menghapus fase pertumbuhan');
+        }
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal terhubung ke API server');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -103,21 +131,12 @@ export const GrowthPhasesView = ({ apiUrl }) => {
 
         <button
           onClick={fetchPhases}
-          className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-white hover:bg-emerald-50 text-slate-700 text-xs font-bold transition border border-slate-200 shadow-sm"
+          className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-white hover:bg-emerald-50 text-slate-700 text-xs font-bold transition border border-slate-200 shadow-sm cursor-pointer"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-600' : ''}`} />
           <span>Refresh</span>
         </button>
       </div>
-
-      {notice && (
-        <div className={`px-4 py-3 rounded-2xl text-sm flex items-center space-x-2 shadow-sm ${
-          notice.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
 
       {/* Add / Edit Form */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm shadow-emerald-950/5">
@@ -209,8 +228,8 @@ export const GrowthPhasesView = ({ apiUrl }) => {
                   <span>Edit</span>
                 </button>
                 <button
-                  onClick={() => handleDelete(p.id)}
-                  className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 transition text-xs font-bold flex items-center space-x-1"
+                  onClick={() => setDeletingPhaseId(p.id)}
+                  className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 transition text-xs font-bold flex items-center space-x-1 cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Hapus</span>
@@ -224,6 +243,19 @@ export const GrowthPhasesView = ({ apiUrl }) => {
           </div>
         )}
       </div>
+
+      {/* Delete Growth Phase Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(deletingPhaseId)}
+        title="Hapus Fase Pertumbuhan"
+        message="Apakah Anda yakin ingin menghapus fase pertumbuhan tanaman ini?"
+        confirmText="Ya, Hapus Fase"
+        cancelText="Batal"
+        confirmVariant="danger"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeletingPhaseId(null)}
+      />
     </motion.div>
   );
 };

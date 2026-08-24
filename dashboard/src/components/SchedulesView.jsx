@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Plus, Clock, Cpu, Trash2, ToggleLeft, ToggleRight, Sprout, AlertCircle, CheckCircle2, Tag } from 'lucide-react';
+import { Calendar, Plus, Clock, Cpu, Trash2, ToggleLeft, ToggleRight, Sprout, Tag } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { goeyToast } from 'goey-toast';
+import { ConfirmModal } from './ConfirmModal';
 
 export const SchedulesView = ({ apiUrl }) => {
   const [data, setData] = useState(null);
@@ -15,16 +18,17 @@ export const SchedulesView = ({ apiUrl }) => {
   const [startTime, setStartTime] = useState('07:00');
   const [durationMinutes, setDurationMinutes] = useState(5);
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState(null);
+
+  // Delete Confirm Modal State
+  const [deletingScheduleId, setDeletingScheduleId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchSchedules = async (profileId) => {
     try {
       setLoading(true);
-      const url = profileId
-        ? `${apiUrl}/api/schedules?profile_id=${profileId}`
-        : `${apiUrl}/api/schedules`;
-      const res = await fetch(url);
-      const json = await res.json();
+      const { data: resData, error: actionError } = await actions.getSchedules({ profileId });
+      const json = (!actionError && resData) ? resData : await (await fetch(profileId ? `/api/schedules?profile_id=${profileId}` : '/api/schedules')).json();
+      
       if (json.success) {
         setData(json);
         if (json.profile) {
@@ -59,29 +63,31 @@ export const SchedulesView = ({ apiUrl }) => {
 
     try {
       setSubmitting(true);
-      setMessage(null);
-      const res = await fetch(`${apiUrl}/api/schedules`, {
+      const payload = {
+        fertigation_profile_id: selectedProfileId,
+        valve_id: parseInt(valveId.toString(), 10),
+        growth_phase_id: growthPhaseId ? parseInt(growthPhaseId.toString(), 10) : null,
+        hst_start: parseInt(hstStart.toString(), 10),
+        hst_end: parseInt(hstEnd.toString(), 10),
+        start_time: startTime,
+        duration_minutes: parseInt(durationMinutes.toString(), 10),
+      };
+
+      const { data: resData, error: actionError } = await actions.addSchedule(payload);
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/schedules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fertigation_profile_id: selectedProfileId,
-          valve_id: parseInt(valveId.toString(), 10),
-          growth_phase_id: growthPhaseId ? parseInt(growthPhaseId.toString(), 10) : null,
-          hst_start: parseInt(hstStart.toString(), 10),
-          hst_end: parseInt(hstEnd.toString(), 10),
-          start_time: startTime,
-          duration_minutes: parseInt(durationMinutes.toString(), 10),
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (res.ok && json.success) {
-        setMessage({ type: 'success', text: json.message || 'Jadwal berhasil ditambahkan!' });
+        body: JSON.stringify(payload),
+      })).json().catch(() => ({}));
+
+      if (json.success) {
+        goeyToast.success(json.message || 'Jadwal berhasil ditambahkan!');
         fetchSchedules(selectedProfileId);
       } else {
-        setMessage({ type: 'error', text: json.message || json.error || 'Gagal menambah jadwal.' });
+        goeyToast.error(json.message || json.error || 'Gagal menambah jadwal');
       }
     } catch (err) {
-      setMessage({ type: 'error', text: 'Gagal terhubung ke API server' });
+      goeyToast.error('Gagal terhubung ke API server');
     } finally {
       setSubmitting(false);
     }
@@ -89,30 +95,49 @@ export const SchedulesView = ({ apiUrl }) => {
 
   const handleToggle = async (id) => {
     try {
-      const res = await fetch(`${apiUrl}/api/schedules/${id}/toggle`, {
-        method: 'PATCH',
-      });
-      const json = await res.json();
-      if (json.success) {
+      const { data: resData, error: actionError } = await actions.toggleSchedule({ id });
+      if (!actionError && resData?.success) {
+        goeyToast.success(resData.message || 'Status jadwal berhasil diubah');
         fetchSchedules(selectedProfileId || undefined);
+      } else {
+        const res = await fetch(`/api/schedules/${id}/toggle`, { method: 'PATCH' });
+        const json = await res.json();
+        if (json.success) {
+          goeyToast.success(json.message || 'Status jadwal berhasil diubah');
+          fetchSchedules(selectedProfileId || undefined);
+        } else {
+          goeyToast.error(json.message || 'Gagal mengubah status jadwal');
+        }
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal mengubah status jadwal');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus jadwal penyiraman ini?')) return;
+  const handleDeleteConfirm = async () => {
+    if (!deletingScheduleId) return;
     try {
-      const res = await fetch(`${apiUrl}/api/schedules/${id}`, {
-        method: 'DELETE',
-      });
-      const json = await res.json();
-      if (json.success) {
+      setDeleting(true);
+      const { data: resData, error: actionError } = await actions.deleteSchedule({ id: deletingScheduleId });
+      if (!actionError && resData?.success) {
+        goeyToast.success(resData.message || 'Jadwal berhasil dihapus!');
+        setDeletingScheduleId(null);
         fetchSchedules(selectedProfileId || undefined);
+      } else {
+        const res = await fetch(`/api/schedules/${deletingScheduleId}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          goeyToast.success(json.message || 'Jadwal berhasil dihapus!');
+          setDeletingScheduleId(null);
+          fetchSchedules(selectedProfileId || undefined);
+        } else {
+          goeyToast.error(json.message || 'Gagal menghapus jadwal');
+        }
       }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal menghapus jadwal');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -188,15 +213,6 @@ export const SchedulesView = ({ apiUrl }) => {
           <Plus className="w-5 h-5 text-emerald-600" />
           <span>Tambah Jadwal Penyiraman</span>
         </h3>
-
-        {message && (
-          <div className={`mb-4 px-4 py-3 rounded-xl text-sm flex items-center space-x-2 ${
-            message.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
-          }`}>
-            {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-            <span>{message.text}</span>
-          </div>
-        )}
 
         <form onSubmit={handleAddSchedule} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -382,8 +398,8 @@ export const SchedulesView = ({ apiUrl }) => {
                         </button>
 
                         <button
-                          onClick={() => handleDelete(schedule.id)}
-                          className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold inline-flex items-center space-x-1 transition"
+                          onClick={() => setDeletingScheduleId(schedule.id)}
+                          className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold inline-flex items-center space-x-1 transition cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                           <span>Hapus</span>
@@ -403,6 +419,19 @@ export const SchedulesView = ({ apiUrl }) => {
           </table>
         </div>
       </div>
+
+      {/* Delete Schedule Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(deletingScheduleId)}
+        title="Hapus Jadwal Penyiraman"
+        message="Apakah Anda yakin ingin menghapus jadwal penyiraman ini? Tindakan ini tidak dapat dibatalkan."
+        confirmText="Ya, Hapus Jadwal"
+        cancelText="Batal"
+        confirmVariant="danger"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeletingScheduleId(null)}
+      />
     </motion.div>
   );
 };

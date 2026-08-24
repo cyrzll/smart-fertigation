@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Sliders, Plus, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sliders, Plus } from 'lucide-react';
+import { actions } from 'astro:actions';
+import { goeyToast } from 'goey-toast';
 
 export const PlantingsView = ({ apiUrl }) => {
   const [plantings, setPlantings] = useState([]);
@@ -10,19 +12,18 @@ export const PlantingsView = ({ apiUrl }) => {
   const [plantingDate, setPlantingDate] = useState(new Date().toISOString().split('T')[0]);
   const [profileId, setProfileId] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState(null);
 
   const fetchPlantings = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${apiUrl}/api/plantings`);
-      const json = await res.json();
+      const { data: resData, error: actionError } = await actions.getPlantings();
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/plantings')).json();
       if (json.success) {
         setPlantings(json.plantings);
       }
 
-      const pRes = await fetch(`${apiUrl}/api/profiles`);
-      const pJson = await pRes.json();
+      const { data: pData, error: pError } = await actions.getProfiles();
+      const pJson = (!pError && pData) ? pData : await (await fetch('/api/profiles')).json();
       if (pJson.success) {
         setProfiles(pJson.profiles);
         if (pJson.profiles.length > 0 && !profileId) {
@@ -46,26 +47,28 @@ export const PlantingsView = ({ apiUrl }) => {
 
     try {
       setSubmitting(true);
-      setNotice(null);
-      const res = await fetch(`${apiUrl}/api/plantings`, {
+      const payload = {
+        name,
+        planting_date: plantingDate,
+        fertigation_profile_id: profileId ? parseInt(profileId.toString(), 10) : null,
+      };
+
+      const { data: resData, error: actionError } = await actions.addPlanting(payload);
+      const json = (!actionError && resData) ? resData : await (await fetch('/api/plantings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          planting_date: plantingDate,
-          fertigation_profile_id: profileId ? parseInt(profileId.toString(), 10) : null,
-        }),
-      });
-      const json = await res.json();
+        body: JSON.stringify(payload),
+      })).json();
+
       if (json.success) {
-        setNotice({ type: 'success', text: json.message });
+        goeyToast.success(json.message || 'Batch penanaman berhasil ditambahkan!');
         setName('');
         fetchPlantings();
       } else {
-        setNotice({ type: 'error', text: json.message || 'Gagal menambah penanaman' });
+        goeyToast.error(json.message || 'Gagal menambah penanaman');
       }
     } catch (err) {
-      setNotice({ type: 'error', text: 'Gagal terhubung ke API server' });
+      goeyToast.error('Gagal terhubung ke API server');
     } finally {
       setSubmitting(false);
     }
@@ -73,11 +76,16 @@ export const PlantingsView = ({ apiUrl }) => {
 
   const handleActivate = async (id) => {
     try {
-      const res = await fetch(`${apiUrl}/api/plantings/${id}/activate`, { method: 'PATCH' });
+      const res = await fetch(`/api/plantings/${id}/activate`, { method: 'PATCH' });
       const json = await res.json();
-      if (json.success) fetchPlantings();
+      if (json.success) {
+        goeyToast.success(json.message || 'Batch penanaman berhasil diaktifkan!');
+        fetchPlantings();
+      } else {
+        goeyToast.error(json.message || 'Gagal mengaktifkan batch penanaman');
+      }
     } catch (err) {
-      console.error(err);
+      goeyToast.error('Gagal mengaktifkan penanaman');
     }
   };
 
@@ -93,15 +101,6 @@ export const PlantingsView = ({ apiUrl }) => {
         <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Manajemen Penanaman (Plantings)</h2>
         <p className="text-slate-500 text-sm mt-1">Buat batch penanaman baru dan pilih batch aktif untuk perhitungan HST.</p>
       </div>
-
-      {notice && (
-        <div className={`px-4 py-3 rounded-2xl text-sm flex items-center space-x-2 shadow-sm ${
-          notice.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
-        }`}>
-          {notice.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-          <span>{notice.text}</span>
-        </div>
-      )}
 
       {/* Add Planting Form */}
       <div className="bg-white border border-emerald-100 rounded-2xl p-6 shadow-sm shadow-emerald-950/5">

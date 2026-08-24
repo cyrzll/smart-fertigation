@@ -9,6 +9,7 @@ import pino from 'pino';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pool } from '../db.js';
+import { sendValveCommandToDevice } from './wsServer.js';
 
 let sock: WASocket | null = null;
 let qrCodeData: string | null = null;
@@ -259,8 +260,33 @@ Anda sekarang memiliki wewenang penuh untuk memonitor & mengontrol perangkat ESP
           const userUid = matchedUser.uid;
           const userName = matchedUser.user_name || 'User';
 
+          // Check if user has registered an ESP32 device
+          const [userDevices]: any = await pool.query(
+            'SELECT * FROM devices WHERE user_id = ? ORDER BY (status = "verified") DESC, id DESC',
+            [userId]
+          );
+          const hasDevice = userDevices.length > 0;
+          const primaryDevice = userDevices[0];
+
+          // If user has not added any device and requests a feature menu
+          if (!hasDevice && (
+            cmd === '1' || cmd === 'status' || cmd === 'status sistem' || cmd === '!status' ||
+            cmd === '2' || cmd === 'sensor' || cmd === 'kondisi' || cmd === 'kondisi sensor' || cmd === 'greenhouse' || cmd === '!sensor' ||
+            cmd === '3' || cmd === 'jadwal' || cmd === 'jadwal hari ini' || cmd === '!jadwal' ||
+            cmd === '4' || cmd === 'setting' || cmd === 'setting jadwal' ||
+            cmd === '5' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman' ||
+            cmd === '6' || cmd === 'valve' || cmd === 'status valve' ||
+            cmd === '7' || cmd === 'test' || cmd === 'test valve' ||
+            cmd.startsWith('on ') || cmd.startsWith('off ')
+          )) {
+            replyText = `⚠️ *Perangkat ESP32 Belum Terdaftar* (User: ${userName} | ${userUid})
+
+Silakan tambahkan perangkat terlebih dahulu melalui menu *Pengaturan* di Dashboard Web (http://localhost:4321/settings).
+
+Setelah perangkat ESP32 ditambahkan dan diverifikasi, seluruh menu pemantauan & kontrol akan aktif secara otomatis.`;
+          }
           // Menu 1: STATUS / STATUS SISTEM
-          if (cmd === '1' || cmd === 'status' || cmd === 'status sistem' || cmd === '!status') {
+          else if (cmd === '1' || cmd === 'status' || cmd === 'status sistem' || cmd === '!status') {
             const [plantings]: any = await pool.query(`
               SELECT p.*, fp.name as profile_name
               FROM plantings p
@@ -419,17 +445,23 @@ Ketik nomor valve & durasi (contoh: *ON 1 10* untuk Buka Valve 1 selama 10 detik
             const [valves]: any = await pool.query('SELECT * FROM valves ORDER BY id ASC LIMIT 2');
             const valve = valves[parseInt(valveNum, 10) - 1] || valves[0];
             const [devices]: any = await pool.query(
-              'SELECT id FROM devices WHERE (user_id = ? OR user_id IS NULL) ORDER BY (user_id = ?) DESC LIMIT 1',
+              'SELECT * FROM devices WHERE (user_id = ? OR user_id IS NULL) ORDER BY (user_id = ?) DESC LIMIT 1',
               [userId, userId]
             );
-            const deviceId = devices[0]?.id || 1;
+            const dev = devices[0];
+            const deviceId = dev?.id || 1;
+            const deviceCode = dev?.device_code || 'ESP-FERTIGASI-01';
 
             if (valve) {
               const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
-              await pool.query(
+              const [insRes]: any = await pool.query(
                 'INSERT INTO device_commands (user_id, device_id, valve_id, command, duration_seconds, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 [userId, deviceId, valve.id, action === 'ON' ? 'OPEN' : 'CLOSE', action === 'ON' ? durationSec : 0, 'pending', nowStr]
               );
+
+              // Push instantly via WebSocket to ESP32
+              const cmdId = insRes.insertId;
+              sendValveCommandToDevice(deviceCode, undefined, cmdId, valve.gpio || (valveNum === '2' ? 26 : 25), action === 'ON' ? 'OPEN' : 'CLOSE', durationSec);
 
               replyText = action === 'ON' 
                 ? `✅ *Perintah Terkirim ke ESP32!* (UID: ${userUid})\nMembuka ${valve.name} selama ${durationSec} detik.`
@@ -440,7 +472,13 @@ Ketik nomor valve & durasi (contoh: *ON 1 10* untuk Buka Valve 1 selama 10 detik
           }
           // Menu 8 / MENU / BANTUAN / HELP / Default
           else {
+            const devInfo = hasDevice 
+              ? `📱 *Perangkat ESP32:* ${primaryDevice?.device_code || 'ESP-FERTIGASI-01'} (${primaryDevice?.status === 'verified' ? '🟢 Terverifikasi' : '🟡 Belum Verifikasi'})`
+              : `⚠️ *Perangkat ESP32:* Belum Ada (Tambahkan perangkat terlebih dahulu di menu Pengaturan Dashboard)`;
+
             replyText = `🌱 *SMART FERTIGATION* (User: ${userName} | ${userUid})
+${devInfo}
+
 Pilih menu:
 1. Status Sistem
 2. Kondisi Sensor
