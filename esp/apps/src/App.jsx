@@ -1,0 +1,503 @@
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Bluetooth,
+  Wifi,
+  Activity,
+  Terminal,
+  RefreshCw,
+  HelpCircle,
+  Sliders,
+} from 'lucide-react';
+import { bleService } from './services/bleService';
+import { Navbar } from './components/Navbar';
+import { DeviceOverview } from './components/DeviceOverview';
+import { WifiManager } from './components/WifiManager';
+import { BleConsole } from './components/BleConsole';
+import { ToastContainer } from './components/Toast';
+
+export function App() {
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+  const [isSupported] = useState(() => bleService.isSupported());
+
+  // Active Tab
+  const [activeTab, setActiveTab] = useState('wifi'); // 'wifi', 'console'
+
+  // ESP32 Status State
+  const [status, setStatus] = useState({
+    device_code: 'ESP-FERTIGASI-01',
+    serial_code: 'tes123',
+    firmware: 'v2.2.0-BLE-WebSocket-Hybrid',
+    auth_code: '',
+    is_authenticated: false,
+    wifi_status: 'DISCONNECTED',
+    ssid: '-',
+    ip: '0.0.0.0',
+    gateway: '-',
+    mac: '-',
+    rssi: 0,
+    ws_status: 'DISCONNECTED',
+    uptime_sec: 0,
+    free_heap: 0,
+    valves: { valve1: false, valve2: false },
+    sensors: {
+      suhu: 29.4,
+      kelembaban: 76.0,
+      media: 63.0,
+      level_air: 72.0,
+      ec: 1.8,
+      ph: 6.2,
+    },
+  });
+
+  // Wi-Fi Scanner & Operations State
+  const [scanResults, setScanResults] = useState([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isConnectingWifi, setIsConnectingWifi] = useState(false);
+
+  // Terminal & BLE Packet Logs
+  const [logs, setLogs] = useState([]);
+
+  // Toast Notifications
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = useCallback((type, message, title = '') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, type, message, title }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
+  const removeToast = (id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // Initialize Subscriptions
+  useEffect(() => {
+    // 1. Connection change listener
+    const unsubConn = bleService.on('connection_change', (data) => {
+      if (data.connected) {
+        setIsConnected(true);
+        setDeviceName(data.deviceName || 'ESP32 Device');
+        addToast('success', `Berhasil terhubung ke ${data.deviceName || 'ESP32'} via Bluetooth!`, 'Koneksi Berhasil');
+      } else {
+        setIsConnected(false);
+        setDeviceName('');
+        if (data.error) {
+          addToast('error', data.error, 'Koneksi Gagal');
+        } else {
+          addToast('info', 'Koneksi Bluetooth dengan ESP32 terputus.', 'Perangkat Terputus');
+        }
+      }
+    });
+
+    // 2. Status update listener
+    const unsubStatus = bleService.on('status', (data) => {
+      setStatus((prev) => ({
+        ...prev,
+        ...data,
+        valves: data.valves || prev.valves,
+        sensors: data.sensors || prev.sensors,
+      }));
+    });
+
+    // 3. Wi-Fi Scan listener
+    const unsubScan = bleService.on('wifi_scan', (data) => {
+      setIsScanning(false);
+      setScanResults(data.networks || []);
+      addToast('success', `Ditemukan ${data.count || 0} jaringan Wi-Fi sekitar.`, 'Pemindaian Selesai');
+    });
+
+    // 4. Wi-Fi Connecting progress
+    const unsubWifiConnecting = bleService.on('wifi_connecting', () => {
+      setIsConnectingWifi(true);
+    });
+
+    // 5. Wi-Fi Connect result
+    const unsubWifiResult = bleService.on('wifi_connect_result', (data) => {
+      setIsConnectingWifi(false);
+      if (data.success) {
+        addToast('success', `Berhasil terhubung ke Wi-Fi ${data.ssid}! IP: ${data.ip}`, 'Wi-Fi Terhubung');
+      } else {
+        addToast('error', data.message || 'Gagal terhubung ke Wi-Fi', 'Koneksi Wi-Fi Gagal');
+      }
+    });
+
+    // 6. Wi-Fi Disconnect result
+    const unsubWifiDis = bleService.on('wifi_disconnect_result', (data) => {
+      addToast('info', data.message || 'Wi-Fi diputuskan.', 'Wi-Fi Terputus');
+    });
+
+    // 7. Wi-Fi Reset result
+    const unsubWifiReset = bleService.on('wifi_reset_result', (data) => {
+      addToast('warning', data.message || 'Kredensial Wi-Fi telah dihapus.', 'Reset Berhasil');
+    });
+
+    // 8. Auth result
+    const unsubAuth = bleService.on('auth_result', (data) => {
+      addToast('success', data.message || 'Pengaturan Auth berhasil diperbarui.', 'Autentikasi');
+    });
+
+    // 9. LED Test result
+    const unsubLed = bleService.on('led_result', (data) => {
+      addToast('info', `LED berkedip ${data.times} kali pada GPIO 2 & GPIO 4.`, 'Test LED Selesai');
+    });
+
+    // 10. Valve result
+    const unsubValve = bleService.on('valve_result', (data) => {
+      addToast('info', `Valve GPIO ${data.gpio} berhasil diatur ke ${data.action}.`, 'Kontrol Valve');
+    });
+
+    // 11. Restart result
+    const unsubRestart = bleService.on('restart_result', () => {
+      addToast('warning', 'ESP32 sedang melakukan reboot ulang sistem.', 'Restarting Device');
+    });
+
+    // 12. Packet Logs listener
+    const unsubLog = bleService.on('log', (logEntry) => {
+      setLogs((prev) => [...prev.slice(-120), logEntry]);
+    });
+
+    return () => {
+      unsubConn();
+      unsubStatus();
+      unsubScan();
+      unsubWifiConnecting();
+      unsubWifiResult();
+      unsubWifiDis();
+      unsubWifiReset();
+      unsubAuth();
+      unsubLed();
+      unsubValve();
+      unsubRestart();
+      unsubLog();
+    };
+  }, [addToast]);
+
+  // Connect BLE Handler
+  const handleConnect = async () => {
+    setIsConnecting(true);
+    try {
+      await bleService.connect();
+    } catch (err) {
+      console.error('BLE connection failed:', err);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Disconnect BLE Handler
+  const handleDisconnect = async () => {
+    await bleService.disconnect();
+  };
+
+  // Refresh Status
+  const handleRefreshStatus = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.requestStatus();
+      addToast('info', 'Meminta pembaruan status terbaru dari ESP32...', 'Status Diperbarui');
+    } catch (e) {
+      addToast('error', 'Gagal memperbarui status: ' + e.message);
+    }
+  };
+
+  // Scan Wi-Fi
+  const handleScanWifi = async () => {
+    if (!isConnected) return;
+    setIsScanning(true);
+    try {
+      await bleService.scanWifi();
+    } catch (e) {
+      setIsScanning(false);
+      addToast('error', 'Gagal memindai Wi-Fi: ' + e.message);
+    }
+  };
+
+  // Connect to Wi-Fi
+  const handleConnectWifi = async (ssid, pass) => {
+    if (!isConnected) return;
+    setIsConnectingWifi(true);
+    try {
+      await bleService.connectWifi(ssid, pass);
+    } catch (e) {
+      setIsConnectingWifi(false);
+      addToast('error', 'Gagal mengirim perintah Wi-Fi: ' + e.message);
+    }
+  };
+
+  // Disconnect Wi-Fi
+  const handleDisconnectWifi = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.disconnectWifi();
+    } catch (e) {
+      addToast('error', 'Gagal memutus Wi-Fi: ' + e.message);
+    }
+  };
+
+  // Reset Wi-Fi
+  const handleResetWifi = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.resetWifi();
+    } catch (e) {
+      addToast('error', 'Gagal mereset Wi-Fi: ' + e.message);
+    }
+  };
+
+  // Test LED
+  const handleTestLed = async (times) => {
+    if (!isConnected) return;
+    try {
+      await bleService.testLed(times);
+    } catch (e) {
+      addToast('error', 'Gagal menguji LED: ' + e.message);
+    }
+  };
+
+  // Set Auth Code
+  const handleSetAuth = async (code) => {
+    if (!isConnected) return;
+    try {
+      await bleService.setAuth(code);
+    } catch (e) {
+      addToast('error', 'Gagal menyimpan Auth Code: ' + e.message);
+    }
+  };
+
+  // Reset Auth Code
+  const handleResetAuth = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.resetAuth();
+    } catch (e) {
+      addToast('error', 'Gagal mereset Auth Code: ' + e.message);
+    }
+  };
+
+  // Restart ESP32
+  const handleRestart = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.restartDevice();
+    } catch (e) {
+      addToast('error', 'Gagal restart ESP32: ' + e.message);
+    }
+  };
+
+  // Send raw command
+  const handleSendCommand = async (cmdObj) => {
+    if (!isConnected) return;
+    try {
+      await bleService.sendCommand(cmdObj);
+    } catch (e) {
+      addToast('error', 'Gagal mengirim command: ' + e.message);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col bg-[#FAFAF7] text-[#2D3B2D] selection:bg-[#7BAF5A]/20 selection:text-[#3A6B2A]">
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+
+      {/* Top Navbar */}
+      <Navbar
+        isConnected={isConnected}
+        isConnecting={isConnecting}
+        deviceName={deviceName}
+        onConnect={handleConnect}
+        onDisconnect={handleDisconnect}
+        isSupported={isSupported}
+        onRefresh={handleRefreshStatus}
+      />
+
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {!isConnected ? (
+          /* ===================================================================
+             UNCONNECTED STATE: Hero & Bluetooth Pairing Card
+             =================================================================== */
+          <div className="max-w-3xl mx-auto my-6 space-y-8">
+            <div className="bg-white border border-[#D4DFC8] rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-xs">
+              <div className="relative z-10 space-y-6">
+                {/* Glowing Bluetooth Radar Pulse Icon */}
+                <div className="relative mx-auto w-24 h-24 flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full bg-[#7BAF5A]/15 animate-radar pointer-events-none" />
+                  <div className="relative w-20 h-20 rounded-2xl bg-[#E8F2DF] border border-[#C8D9B0] flex items-center justify-center shadow-xs">
+                    <Bluetooth className="w-10 h-10 text-[#7BAF5A]" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#2D3B2D] tracking-tight">
+                    Hubungkan ke ESP32 Fertigasi
+                  </h2>
+                  <p className="text-sm text-[#8A9B7A] max-w-lg mx-auto leading-relaxed">
+                    Kelola konfigurasi Wi-Fi, pantau telemetri sensor, dan kendalikan aktuator katup fertigasi secara
+                    langsung via Bluetooth Low Energy (BLE).
+                  </p>
+                </div>
+
+                {/* Connect CTA Button */}
+                <div className="pt-2">
+                  <button
+                    onClick={handleConnect}
+                    disabled={isConnecting || !isSupported}
+                    className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-[#7BAF5A] hover:bg-[#6A9E49] text-white font-bold text-base shadow-sm shadow-[#7BAF5A]/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isConnecting ? (
+                      <>
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>Mencari & Menyambungkan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Bluetooth className="w-5 h-5" />
+                        <span>Pindai & Sambungkan Bluetooth</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Feature Highlights Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+                <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
+                  <Wifi className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Wi-Fi Provisioning</h3>
+                  <p className="text-xs text-[#8A9B7A] leading-relaxed">
+                    Pindai hotspot sekitar dan konfigurasi SSID & sandi Wi-Fi tanpa perlu kabel serial.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+                <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Telemetri Real-Time</h3>
+                  <p className="text-xs text-[#8A9B7A] leading-relaxed">
+                    Pantau metrik suhu, kelembaban, media tanah, level air, EC, dan pH secara nirkabel.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+                <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Kendali Aktuator</h3>
+                  <p className="text-xs text-[#8A9B7A] leading-relaxed">
+                    Buka dan tutup relay katup fertigasi zona A & B serta uji coba blink indikator LED.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Browser Requirement Notice */}
+            <div className="rounded-2xl p-4 bg-[#F0F4EA] border border-[#D4DFC8] flex items-center justify-between text-xs text-[#5A6B5A]">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-[#7BAF5A] shrink-0" />
+                <span>Membutuhkan Google Chrome, Microsoft Edge, atau browser Chromium dengan Bluetooth aktif.</span>
+              </div>
+              <span className="font-mono text-[11px] text-[#3A6B2A] font-semibold hidden sm:inline">Web Bluetooth API v1</span>
+            </div>
+          </div>
+        ) : (
+          /* ===================================================================
+             CONNECTED STATE: Full Interactive Dashboard
+             =================================================================== */
+          <div className="space-y-6">
+            {/* Device Overview Card (System, RAM, Auth, Blink Test) */}
+            <DeviceOverview
+              status={status}
+              isConnected={isConnected}
+              onTestLed={handleTestLed}
+              onRestart={handleRestart}
+              onRefresh={handleRefreshStatus}
+              onResetAuth={handleResetAuth}
+              onSetAuth={handleSetAuth}
+            />
+
+            {/* Navigation Tabs Bar */}
+            <div className="flex items-center gap-2 border-b border-[#D4DFC8] pb-3 overflow-x-auto no-scrollbar">
+              <button
+                onClick={() => setActiveTab('wifi')}
+                className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                  activeTab === 'wifi'
+                    ? 'bg-[#7BAF5A] text-white shadow-xs'
+                    : 'bg-white border border-[#D4DFC8] text-[#5A6B5A] hover:text-[#3A6B2A] hover:bg-[#F0F4EA]'
+                }`}
+              >
+                <Wifi className="w-4 h-4" />
+                <span>Koneksi Wi-Fi & Jaringan</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('console')}
+                className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                  activeTab === 'console'
+                    ? 'bg-[#7BAF5A] text-white shadow-xs'
+                    : 'bg-white border border-[#D4DFC8] text-[#5A6B5A] hover:text-[#3A6B2A] hover:bg-[#F0F4EA]'
+                }`}
+              >
+                <Terminal className="w-4 h-4" />
+                <span>Konsol Log BLE</span>
+                {logs.length > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-semibold ${
+                    activeTab === 'console' ? 'bg-white/20 text-white' : 'bg-[#E8EDE0] text-[#5A6B5A]'
+                  }`}>
+                    {logs.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Tab Contents */}
+            {activeTab === 'wifi' && (
+              <WifiManager
+                status={status}
+                scanResults={scanResults}
+                isScanning={isScanning}
+                isConnectingWifi={isConnectingWifi}
+                onScanWifi={handleScanWifi}
+                onConnectWifi={handleConnectWifi}
+                onDisconnectWifi={handleDisconnectWifi}
+                onResetWifi={handleResetWifi}
+              />
+            )}
+
+
+
+            {activeTab === 'console' && (
+              <BleConsole
+                logs={logs}
+                onSendCommand={handleSendCommand}
+                onClearLogs={() => setLogs([])}
+              />
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-[#D4DFC8] bg-white/60 py-4 text-center text-xs text-[#8A9B7A]">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>Smart Fertigation AIoT • ESP32 BLE Web Manager</span>
+          <span className="text-[11px] font-mono text-[#5A6B5A]">GATT Service: {isSupported ? 'Ready' : 'Unsupported'}</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
