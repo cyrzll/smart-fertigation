@@ -129,8 +129,23 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
 
     const connectWs = () => {
       try {
-        const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
-        const wsUrl = `ws://${host}:3001/ws/dashboard`;
+        let wsUrl = 'ws://localhost:3001/ws/dashboard';
+        if (typeof window !== 'undefined') {
+          const isHttps = window.location.protocol === 'https:';
+          const protocol = isHttps ? 'wss:' : 'ws:';
+          if (isHttps) {
+            // Production HTTPS environment
+            if (window.location.hostname.includes('tirtaruna.site')) {
+              wsUrl = 'wss://api.tirtaruna.site/ws/dashboard';
+            } else {
+              wsUrl = `wss://${window.location.host}/ws/dashboard`;
+            }
+          } else {
+            const host = window.location.hostname || 'localhost';
+            wsUrl = `ws://${host}:3001/ws/dashboard`;
+          }
+        }
+
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {

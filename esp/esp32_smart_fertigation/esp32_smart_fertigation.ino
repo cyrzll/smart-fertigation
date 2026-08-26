@@ -2,7 +2,7 @@
   =================================================================================
   SMART FERTIGATION AIoT - ESP32 WEBSOCKET & BLE HYBRID FIRMWARE
   =================================================================================
-  Firmware Version : v2.4.0-BLE-WebSocket-Hybrid
+  Firmware Version : v2.4.1-BLE-WebSocket-Hybrid
   Release Date     : 26 Agustus 2026
   Compatibility    : ESP32 DevKit V1 / ESP32-WROOM-32 / ESP32-WROOM-DA Module
   =================================================================================
@@ -43,7 +43,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.4.0-BLE-WebSocket-Hybrid";
+const char* firmware_version = "v2.4.1-BLE-WebSocket-Hybrid";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -898,8 +898,17 @@ void setup() {
   auth_code = preferences.getString("auth_code", "");
   ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
   ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
+
+  // Jika NVS masih menyimpan IP lokal lama atau kosong, otomatis perbarui ke production API default
+  if (ws_host_str.startsWith("192.168.") || ws_host_str.startsWith("10.") || ws_host_str.startsWith("172.") || ws_host_str == "") {
+    ws_host_str = DEFAULT_WS_HOST;
+    ws_port = DEFAULT_WS_PORT;
+    preferences.putString("ws_host", ws_host_str);
+    preferences.putUShort("ws_port", ws_port);
+    Serial.println("[API] Migrasi otomatis NVS ke Production API (api.tirtaruna.site:443)");
+  }
   preferences.end();
-  Serial.printf("[API] URL API: %s:%d\n", ws_host_str.c_str(), ws_port);
+  Serial.printf("[API] URL API Aktif: %s:%d\n", ws_host_str.c_str(), ws_port);
 
   if (auth_code.length() > 0) {
     is_authenticated = true;
