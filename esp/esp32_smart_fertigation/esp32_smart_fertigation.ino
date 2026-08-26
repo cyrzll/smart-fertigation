@@ -2,19 +2,20 @@
   =================================================================================
   SMART FERTIGATION AIoT - ESP32 WEBSOCKET & BLE HYBRID FIRMWARE
   =================================================================================
-  Firmware Version : v2.3.2-BLE-WebSocket-Hybrid
+  Firmware Version : v2.4.0-BLE-WebSocket-Hybrid
   Release Date     : 26 Agustus 2026
   Compatibility    : ESP32 DevKit V1 / ESP32-WROOM-32 / ESP32-WROOM-DA Module
   =================================================================================
   Features:
   - Web Bluetooth Low Energy (BLE) GATT Server for Wireless Dashboard & Config
   - Wi-Fi Network Scanning, Pairing, Connection & Reset over BLE
-  - Real-Time Bidirectional WebSocket Client (ws://<server_ip>:3001/ws/device)
+  - Real-Time Bidirectional WebSocket Client (Secure WSS & Standard WS Support)
+  - Default API Host: https://api.tirtaruna.site (WSS port 443)
   - Dynamic API URL (Host & Port) Configurable via BLE & Saved in NVS
   - Auto Wi-Fi Config Portal via WiFiManager fallback (SSID AP: ESP32-Smart-Fertigation)
   - Permanent auth_code Storage in Flash Memory (NVS / ESP32 Preferences)
   - Instant LED Verification Blink (1-8 times) with Simultaneous GPIO 2 & GPIO 4 Drive
-  - Real-Time Manual LED & Valve Relay Actuation (GPIO 25, GPIO 26, dynamic GPIO)
+  - Real-Time Manual LED & Valve Relay Actuation (Active-Low Non-Blocking Timers)
   - Automatic Sensor Telemetry & Heartbeat Streaming
   - Dual-Key Socket Authentication (device_code & serial_code cross-matching)
   =================================================================================
@@ -42,11 +43,11 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.3.2-BLE-WebSocket-Hybrid";
+const char* firmware_version = "v2.4.0-BLE-WebSocket-Hybrid";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
-#define DEFAULT_WS_HOST "192.168.77.245"
-#define DEFAULT_WS_PORT 3001
+#define DEFAULT_WS_HOST "api.tirtaruna.site"
+#define DEFAULT_WS_PORT 443
 
 String ws_host_str = DEFAULT_WS_HOST;
 uint16_t ws_port = DEFAULT_WS_PORT;
@@ -169,10 +170,61 @@ void sendBleNotify(String message) {
   }
 }
 
+// Helper to sanitize host string (strip https://, http://, wss://, ws://, trailing slash)
+String sanitizeHostString(String host) {
+  String clean = host;
+  clean.trim();
+  clean.replace("https://", "");
+  clean.replace("http://", "");
+  clean.replace("wss://", "");
+  clean.replace("ws://", "");
+  while (clean.endsWith("/")) {
+    clean.remove(clean.length() - 1);
+  }
+  return clean;
+}
+
+// Connect WebSocket with current API URL (supports both WS and Secure WSS/SSL)
+void connectWebSocketServer() {
+  if (WiFi.status() == WL_CONNECTED && ws_host_str.length() > 0) {
+    webSocket.disconnect();
+
+    String cleanHost = sanitizeHostString(ws_host_str);
+    String wsUrl = "/ws/device?device_code=" + String(device_code) + 
+                   "&serial_code=" + String(serial_code) + 
+                   "&auth_code=" + auth_code;
+
+    // Check if SSL should be used (port 443, https domain, or non-IP domain)
+    bool isSSL = (ws_port == 443 || cleanHost.indexOf(".site") != -1 || cleanHost.indexOf(".com") != -1 || cleanHost.indexOf(".org") != -1 || cleanHost.indexOf(".id") != -1);
+    if (ws_port == 3001 || ws_port == 80) {
+      isSSL = false;
+    }
+
+    if (isSSL) {
+      Serial.printf("[WS] Menghubungkan secara SECURE (WSS/SSL) ke wss://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
+      webSocket.beginSSL(cleanHost.c_str(), ws_port, wsUrl.c_str());
+    } else {
+      Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
+      webSocket.begin(cleanHost.c_str(), ws_port, wsUrl.c_str());
+    }
+
+    webSocket.onEvent(webSocketEvent);
+    webSocket.setReconnectInterval(2000);
+    webSocket.enableHeartbeat(4000, 1500, 2);
+  }
+}
+
 // Save API URL (host + port) permanently into NVS
 void saveApiUrl(String host, uint16_t port) {
-  ws_host_str = host;
-  ws_port = port;
+  String cleanHost = sanitizeHostString(host);
+  ws_host_str = cleanHost;
+  
+  if (port > 0) {
+    ws_port = port;
+  } else {
+    // Auto-detect default port: 443 for domains, 3001 for local IPs
+    ws_port = (cleanHost.indexOf(".") != -1 && cleanHost.indexOf("192.168.") == -1 && cleanHost.indexOf("10.") == -1 && cleanHost.indexOf("172.") == -1) ? 443 : DEFAULT_WS_PORT;
+  }
 
   preferences.begin("fertigation", false);
   preferences.putString("ws_host", ws_host_str);
@@ -196,14 +248,7 @@ void resetApiUrl() {
 
 // Reconnect WebSocket with current API URL
 void reconnectWebSocket() {
-  if (WiFi.status() == WL_CONNECTED) {
-    webSocket.disconnect();
-    String wsUrl = "/ws/device?device_code=" + String(device_code) +
-                   "&serial_code=" + String(serial_code) +
-                   "&auth_code=" + auth_code;
-    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
-    Serial.printf("[WS] Reconnecting ke ws://%s:%d%s...\n", ws_host_str.c_str(), ws_port, wsUrl.c_str());
-  }
+  connectWebSocketServer();
 }
 
 // Send comprehensive Device & WiFi Status over BLE
@@ -344,10 +389,7 @@ void connectWifiViaBle(String ssid, String pass) {
     Serial.printf("[BLE Wi-Fi] Berhasil terhubung! IP: %s\n", WiFi.localIP().toString().c_str());
 
     // Connect / Reconnect WebSocket
-    String wsUrl = "/ws/device?device_code=" + String(device_code) + 
-                   "&serial_code=" + String(serial_code) + 
-                   "&auth_code=" + auth_code;
-    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
+    connectWebSocketServer();
   } else {
     resDoc["success"] = false;
     resDoc["ssid"] = ssid;
@@ -887,15 +929,7 @@ void setup() {
     digitalWrite(ONBOARD_LED, HIGH);
 
     // 4. Inisialisasi WebSocket Client jika Wi-Fi terhubung
-    String wsUrl = "/ws/device?device_code=" + String(device_code) + 
-                   "&serial_code=" + String(serial_code) + 
-                   "&auth_code=" + auth_code;
-
-    Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", ws_host_str.c_str(), ws_port, wsUrl.c_str());
-    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
-    webSocket.onEvent(webSocketEvent);
-    webSocket.setReconnectInterval(2000);
-    webSocket.enableHeartbeat(4000, 1500, 2);
+    connectWebSocketServer();
   } else {
     WiFi.disconnect(); // Hentikan ongoing retry di background agar tidak memblokir scan Wi-Fi
     Serial.println("[Wi-Fi] Belum terhubung ke Wi-Fi. Anda dapat menyambungkannya sekarang via Web Bluetooth!");

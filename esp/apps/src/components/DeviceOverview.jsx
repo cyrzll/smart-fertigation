@@ -35,8 +35,8 @@ export function DeviceOverview({
 
   // API Modal State
   const [showApiModal, setShowApiModal] = useState(false);
-  const [apiHost, setApiHost] = useState(status.api_host || '192.168.1.4');
-  const [apiPort, setApiPort] = useState(status.api_port || 3001);
+  const [apiHost, setApiHost] = useState(status.api_host || 'api.tirtaruna.site');
+  const [apiPort, setApiPort] = useState(status.api_port || 443);
 
   if (!isConnected) {
     return null;
@@ -84,20 +84,20 @@ export function DeviceOverview({
   };
 
   const handleOpenApiModal = () => {
-    setApiHost(status.api_host || '192.168.1.4');
-    setApiPort(status.api_port || 3001);
+    setApiHost(status.api_host || 'api.tirtaruna.site');
+    setApiPort(status.api_port || 443);
     setShowApiModal(true);
   };
 
   const handleSaveApi = async (e) => {
     e.preventDefault();
     if (!apiHost.trim()) return;
-    await onSetApi(apiHost.trim(), Number(apiPort) || 3001);
+    await onSetApi(apiHost.trim(), Number(apiPort) || 443);
     setShowApiModal(false);
   };
 
   const handleResetApi = async () => {
-    if (window.confirm('Kembalikan URL API WebSocket ke default (192.168.1.4:3001)?')) {
+    if (window.confirm('Kembalikan URL API WebSocket ke default (api.tirtaruna.site:443)?')) {
       await onResetApi();
       setShowApiModal(false);
     }
