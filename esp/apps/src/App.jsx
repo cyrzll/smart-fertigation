@@ -38,6 +38,8 @@ export function App() {
     mac: '-',
     rssi: 0,
     ws_status: 'DISCONNECTED',
+    api_host: '192.168.1.4',
+    api_port: 3001,
     uptime_sec: 0,
     free_heap: 0,
     valves: { valve1: false, valve2: false },
@@ -155,7 +157,12 @@ export function App() {
       addToast('warning', 'ESP32 sedang melakukan reboot ulang sistem.', 'Restarting Device');
     });
 
-    // 12. Packet Logs listener
+    // 12. API URL Config result
+    const unsubApi = bleService.on('api_result', (data) => {
+      addToast('success', data.message || 'URL API berhasil diperbarui.', 'Konfigurasi API');
+    });
+
+    // 13. Packet Logs listener
     const unsubLog = bleService.on('log', (logEntry) => {
       setLogs((prev) => [...prev.slice(-120), logEntry]);
     });
@@ -172,6 +179,7 @@ export function App() {
       unsubLed();
       unsubValve();
       unsubRestart();
+      unsubApi();
       unsubLog();
     };
   }, [addToast]);
@@ -275,6 +283,26 @@ export function App() {
       await bleService.resetAuth();
     } catch (e) {
       addToast('error', 'Gagal mereset Auth Code: ' + e.message);
+    }
+  };
+
+  // Set API URL
+  const handleSetApi = async (host, port) => {
+    if (!isConnected) return;
+    try {
+      await bleService.setApiUrl(host, port);
+    } catch (e) {
+      addToast('error', 'Gagal mengubah URL API: ' + e.message);
+    }
+  };
+
+  // Reset API URL
+  const handleResetApi = async () => {
+    if (!isConnected) return;
+    try {
+      await bleService.resetApiUrl();
+    } catch (e) {
+      addToast('error', 'Gagal mereset URL API: ' + e.message);
     }
   };
 
@@ -417,7 +445,7 @@ export function App() {
              CONNECTED STATE: Full Interactive Dashboard
              =================================================================== */
           <div className="space-y-6">
-            {/* Device Overview Card (System, RAM, Auth, Blink Test) */}
+            {/* Device Overview Card (System, RAM, Auth, Blink Test, API Config) */}
             <DeviceOverview
               status={status}
               isConnected={isConnected}
@@ -426,6 +454,8 @@ export function App() {
               onRefresh={handleRefreshStatus}
               onResetAuth={handleResetAuth}
               onSetAuth={handleSetAuth}
+              onSetApi={handleSetApi}
+              onResetApi={handleResetApi}
             />
 
             {/* Navigation Tabs Bar */}

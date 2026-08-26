@@ -216,6 +216,10 @@ class BleService {
       case 'RESTART_RESULT':
         this.emit('restart_result', data);
         break;
+      case 'API_SET_RESULT':
+      case 'API_RESET_RESULT':
+        this.emit('api_result', data);
+        break;
       default:
         this.emit('message', data);
         break;
@@ -332,6 +336,20 @@ class BleService {
   /** Restart ESP32 */
   async restartDevice() {
     return this.sendCommand({ cmd: 'RESTART' });
+  }
+
+  /** Set API URL (host + port) */
+  async setApiUrl(host, port) {
+    return this.sendCommand({
+      cmd: 'SET_API',
+      host,
+      port: Number(port),
+    });
+  }
+
+  /** Reset API URL to default */
+  async resetApiUrl() {
+    return this.sendCommand({ cmd: 'RESET_API' });
   }
 }
 

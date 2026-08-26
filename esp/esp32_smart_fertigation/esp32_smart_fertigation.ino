@@ -2,14 +2,15 @@
   =================================================================================
   SMART FERTIGATION AIoT - ESP32 WEBSOCKET & BLE HYBRID FIRMWARE
   =================================================================================
-  Firmware Version : v2.2.0-BLE-WebSocket-Hybrid
-  Release Date     : 25 Agustus 2026
+  Firmware Version : v2.3.2-BLE-WebSocket-Hybrid
+  Release Date     : 26 Agustus 2026
   Compatibility    : ESP32 DevKit V1 / ESP32-WROOM-32 / ESP32-WROOM-DA Module
   =================================================================================
   Features:
   - Web Bluetooth Low Energy (BLE) GATT Server for Wireless Dashboard & Config
   - Wi-Fi Network Scanning, Pairing, Connection & Reset over BLE
   - Real-Time Bidirectional WebSocket Client (ws://<server_ip>:3001/ws/device)
+  - Dynamic API URL (Host & Port) Configurable via BLE & Saved in NVS
   - Auto Wi-Fi Config Portal via WiFiManager fallback (SSID AP: ESP32-Smart-Fertigation)
   - Permanent auth_code Storage in Flash Memory (NVS / ESP32 Preferences)
   - Instant LED Verification Blink (1-8 times) with Simultaneous GPIO 2 & GPIO 4 Drive
@@ -41,9 +42,15 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.2.0-BLE-WebSocket-Hybrid";
-const char* ws_host = "192.168.1.4"; // IP Server Anda
-const uint16_t ws_port = 3001;        // Port Server Hono
+const char* firmware_version = "v2.3.2-BLE-WebSocket-Hybrid";
+
+// Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
+#define DEFAULT_WS_HOST "192.168.77.245"
+#define DEFAULT_WS_PORT 3001
+
+String ws_host_str = DEFAULT_WS_HOST;
+uint16_t ws_port = DEFAULT_WS_PORT;
+
 const char* device_code = "ESP-FERTIGASI-01";
 const char* serial_code = "tes123";
 
@@ -64,9 +71,13 @@ bool is_authenticated = false;
 #define ONBOARD_LED 2       // Onboard Blue LED - GPIO 2
 #define CONFIRM_LED_PIN 4   // External LED Konfirmasi - GPIO 4
 
-// Logika Pin Aktif (HIGH = 3.3V untuk menyalakan LED / Relay Active-High, LOW = 0V)
-#define PIN_ACTIVE_STATE   HIGH
-#define PIN_INACTIVE_STATE LOW
+// Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
+#define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
+#define RELAY_CLOSE_STATE  HIGH  // Sinyal HIGH (3.3V) untuk mematikan relay / menutup valve
+
+// Logika LED (Active-High: HIGH = Menyala, LOW = Mati)
+#define LED_ON_STATE       HIGH
+#define LED_OFF_STATE      LOW
 
 WebSocketsClient webSocket;
 Ticker ledTicker;
@@ -82,9 +93,11 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastTelemetry = 0;
 unsigned long lastBleStatusUpdate = 0;
 
-// Valve States
+// Valve States & Auto-Close Timers
 bool valve1State = false;
 bool valve2State = false;
+unsigned long valve1TimerEnd = 0;
+unsigned long valve2TimerEnd = 0;
 
 // Sensor Dummy / Telemetry Data
 float sensorSuhu = 29.4;
@@ -156,15 +169,56 @@ void sendBleNotify(String message) {
   }
 }
 
+// Save API URL (host + port) permanently into NVS
+void saveApiUrl(String host, uint16_t port) {
+  ws_host_str = host;
+  ws_port = port;
+
+  preferences.begin("fertigation", false);
+  preferences.putString("ws_host", ws_host_str);
+  preferences.putUShort("ws_port", ws_port);
+  preferences.end();
+
+  Serial.printf("[API] URL API tersimpan di NVS: %s:%d\n", ws_host_str.c_str(), ws_port);
+}
+
+// Reset API URL to defaults
+void resetApiUrl() {
+  preferences.begin("fertigation", false);
+  preferences.remove("ws_host");
+  preferences.remove("ws_port");
+  preferences.end();
+
+  ws_host_str = DEFAULT_WS_HOST;
+  ws_port = DEFAULT_WS_PORT;
+  Serial.printf("[API] URL API dikembalikan ke default: %s:%d\n", ws_host_str.c_str(), ws_port);
+}
+
+// Reconnect WebSocket with current API URL
+void reconnectWebSocket() {
+  if (WiFi.status() == WL_CONNECTED) {
+    webSocket.disconnect();
+    String wsUrl = "/ws/device?device_code=" + String(device_code) +
+                   "&serial_code=" + String(serial_code) +
+                   "&auth_code=" + auth_code;
+    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
+    Serial.printf("[WS] Reconnecting ke ws://%s:%d%s...\n", ws_host_str.c_str(), ws_port, wsUrl.c_str());
+  }
+}
+
 // Send comprehensive Device & WiFi Status over BLE
 void sendBleStatus() {
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<1024> doc;
   doc["type"] = "STATUS";
   doc["device_code"] = device_code;
   doc["serial_code"] = serial_code;
   doc["firmware"] = firmware_version;
   doc["auth_code"] = auth_code;
   doc["is_authenticated"] = is_authenticated;
+
+  // API URL info
+  doc["api_host"] = ws_host_str;
+  doc["api_port"] = ws_port;
 
   // Wi-Fi Details
   if (WiFi.status() == WL_CONNECTED) {
@@ -214,27 +268,44 @@ void sendBleStatus() {
 // Perform Wi-Fi Scan and send results over BLE
 void performBleWifiScan() {
   Serial.println("[BLE SCAN] Memulai pemindaian Wi-Fi sekitar...");
-  int n = WiFi.scanNetworks();
+
+  // Pastikan Wi-Fi dalam mode Station & hentikan proses koneksi aktif di background
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(150);
+
+  int n = WiFi.scanNetworks(false, false);
   Serial.printf("[BLE SCAN] Ditemukan %d jaringan Wi-Fi.\n", n);
+
+  // Jika scan awal gagal (-2), coba sekali lagi setelah delay singkat
+  if (n < 0) {
+    delay(200);
+    n = WiFi.scanNetworks(false, false);
+    Serial.printf("[BLE SCAN RETRY] Ditemukan %d jaringan Wi-Fi.\n", n);
+  }
 
   StaticJsonDocument<1024> doc;
   doc["type"] = "WIFI_SCAN_RESULT";
-  doc["count"] = n;
+  doc["count"] = (n >= 0) ? n : 0;
   JsonArray networks = doc.createNestedArray("networks");
 
-  for (int i = 0; i < n && i < 15; ++i) {
-    JsonObject net = networks.createNestedObject();
-    net["ssid"] = WiFi.SSID(i);
-    net["rssi"] = WiFi.RSSI(i);
-    net["secure"] = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+  if (n > 0) {
+    for (int i = 0; i < n && i < 15; ++i) {
+      JsonObject net = networks.createNestedObject();
+      net["ssid"] = WiFi.SSID(i);
+      net["rssi"] = WiFi.RSSI(i);
+      net["secure"] = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    }
   }
 
   String output;
   serializeJson(doc, output);
   sendBleNotify(output);
 
-  // Clean up scan memory
-  WiFi.scanDelete();
+  if (n > 0) {
+    // Clean up scan memory
+    WiFi.scanDelete();
+  }
 }
 
 // Connect to Wi-Fi via BLE Command
@@ -276,7 +347,7 @@ void connectWifiViaBle(String ssid, String pass) {
     String wsUrl = "/ws/device?device_code=" + String(device_code) + 
                    "&serial_code=" + String(serial_code) + 
                    "&auth_code=" + auth_code;
-    webSocket.begin(ws_host, ws_port, wsUrl);
+    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
   } else {
     resDoc["success"] = false;
     resDoc["ssid"] = ssid;
@@ -433,24 +504,29 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
           int duration = doc["duration"] | 0;
 
           pinMode(gpio, OUTPUT);
-          if (action == "OPEN") {
-            digitalWrite(gpio, PIN_ACTIVE_STATE);
-            if (gpio == VALVE1_PIN) valve1State = true;
-            if (gpio == VALVE2_PIN) valve2State = true;
-            digitalWrite(ONBOARD_LED, HIGH);
+          if (action == "OPEN" || action == "TEST_OPEN") {
+            digitalWrite(gpio, RELAY_OPEN_STATE);
+            digitalWrite(ONBOARD_LED, LED_ON_STATE);
 
-            if (duration > 0) {
-              delay(duration * 1000);
-              digitalWrite(gpio, PIN_INACTIVE_STATE);
-              if (gpio == VALVE1_PIN) valve1State = false;
-              if (gpio == VALVE2_PIN) valve2State = false;
-              digitalWrite(ONBOARD_LED, LOW);
+            if (gpio == VALVE1_PIN) {
+              valve1State = true;
+              valve1TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
+            } else if (gpio == VALVE2_PIN) {
+              valve2State = true;
+              valve2TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
             }
           } else {
-            digitalWrite(gpio, PIN_INACTIVE_STATE);
-            if (gpio == VALVE1_PIN) valve1State = false;
-            if (gpio == VALVE2_PIN) valve2State = false;
-            digitalWrite(ONBOARD_LED, LOW);
+            digitalWrite(gpio, RELAY_CLOSE_STATE);
+            if (gpio == VALVE1_PIN) {
+              valve1State = false;
+              valve1TimerEnd = 0;
+            } else if (gpio == VALVE2_PIN) {
+              valve2State = false;
+              valve2TimerEnd = 0;
+            }
+            if (!valve1State && !valve2State) {
+              digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+            }
           }
 
           StaticJsonDocument<256> res;
@@ -474,6 +550,43 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
           sendBleNotify(resStr);
           delay(1000);
           ESP.restart();
+        }
+        // 11. SET_API: Ubah URL API WebSocket (host + port)
+        else if (cmd == "SET_API") {
+          String newHost = doc["host"].as<String>();
+          int newPort = doc["port"] | DEFAULT_WS_PORT;
+
+          if (newHost.length() > 0) {
+            saveApiUrl(newHost, (uint16_t)newPort);
+            reconnectWebSocket();
+
+            StaticJsonDocument<256> res;
+            res["type"] = "API_SET_RESULT";
+            res["success"] = true;
+            res["host"] = ws_host_str;
+            res["port"] = ws_port;
+            res["message"] = "URL API berhasil disimpan!";
+            String resStr;
+            serializeJson(res, resStr);
+            sendBleNotify(resStr);
+            sendBleStatus();
+          }
+        }
+        // 12. RESET_API: Kembalikan URL API ke default
+        else if (cmd == "RESET_API") {
+          resetApiUrl();
+          reconnectWebSocket();
+
+          StaticJsonDocument<256> res;
+          res["type"] = "API_RESET_RESULT";
+          res["success"] = true;
+          res["host"] = ws_host_str;
+          res["port"] = ws_port;
+          res["message"] = "URL API dikembalikan ke default.";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
         }
       }
     }
@@ -535,6 +648,11 @@ void sendWsStatus() {
   webSocket.sendTXT(msg);
 }
 
+// Helper: get ws_host as const char*
+const char* getWsHost() {
+  return ws_host_str.c_str();
+}
+
 // Send Heartbeat via WebSocket
 void sendWsHeartbeat() {
   StaticJsonDocument<128> doc;
@@ -590,7 +708,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       break;
 
     case WStype_CONNECTED:
-      Serial.printf("[WS] TERHUBUNG KE WEBSOCKET SERVER (%s:%d)!\n", ws_host, ws_port);
+      Serial.printf("[WS] TERHUBUNG KE WEBSOCKET SERVER (%s:%d)!\n", ws_host_str.c_str(), ws_port);
       digitalWrite(ONBOARD_LED, HIGH);
       sendWsStatus();
       break;
@@ -629,28 +747,39 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
         int duration = doc["duration"] | 5;
         String cmd = doc["command"].as<String>();
 
-        Serial.printf("[Valve] Mengeksekusi %s pada GPIO %d selama %d detik\n", cmd.c_str(), gpio, duration);
+        Serial.printf("[Valve] Perintah %s pada GPIO %d (durasi: %d detik)\n", cmd.c_str(), gpio, duration);
         int targetPin = gpio;
         pinMode(targetPin, OUTPUT);
         pinMode(ONBOARD_LED, OUTPUT);
 
-        if (cmd == "OPEN") {
-          digitalWrite(targetPin, PIN_ACTIVE_STATE);
-          if (gpio == VALVE1_PIN) valve1State = true;
-          if (gpio == VALVE2_PIN) valve2State = true;
-          digitalWrite(ONBOARD_LED, HIGH);
-          if (duration > 0) {
-            delay(duration * 1000);
-            digitalWrite(targetPin, PIN_INACTIVE_STATE);
-            if (gpio == VALVE1_PIN) valve1State = false;
-            if (gpio == VALVE2_PIN) valve2State = false;
-            digitalWrite(ONBOARD_LED, LOW);
+        if (cmd == "OPEN" || cmd == "TEST_OPEN") {
+          digitalWrite(targetPin, RELAY_OPEN_STATE);
+          digitalWrite(ONBOARD_LED, LED_ON_STATE);
+
+          if (gpio == VALVE1_PIN) {
+            valve1State = true;
+            valve1TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
+            Serial.printf("[Valve] Valve 1 (GPIO %d) TERBUKA (Relay LOW, Timer: %ds)\n", gpio, duration);
+          } else if (gpio == VALVE2_PIN) {
+            valve2State = true;
+            valve2TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
+            Serial.printf("[Valve] Valve 2 (GPIO %d) TERBUKA (Relay LOW, Timer: %ds)\n", gpio, duration);
           }
         } else {
-          digitalWrite(targetPin, PIN_INACTIVE_STATE);
-          if (gpio == VALVE1_PIN) valve1State = false;
-          if (gpio == VALVE2_PIN) valve2State = false;
-          digitalWrite(ONBOARD_LED, LOW);
+          // CLOSE
+          digitalWrite(targetPin, RELAY_CLOSE_STATE);
+          if (gpio == VALVE1_PIN) {
+            valve1State = false;
+            valve1TimerEnd = 0;
+            Serial.printf("[Valve] Valve 1 (GPIO %d) TERTUTUP (Relay HIGH)\n", gpio);
+          } else if (gpio == VALVE2_PIN) {
+            valve2State = false;
+            valve2TimerEnd = 0;
+            Serial.printf("[Valve] Valve 2 (GPIO %d) TERTUTUP (Relay HIGH)\n", gpio);
+          }
+          if (!valve1State && !valve2State) {
+            digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+          }
         }
 
         sendWsCommandComplete(cmdId, "Perintah valve berhasil dieksekusi oleh ESP32");
@@ -716,15 +845,19 @@ void setup() {
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);
 
-  digitalWrite(VALVE1_PIN, PIN_INACTIVE_STATE);
-  digitalWrite(VALVE2_PIN, PIN_INACTIVE_STATE);
-  digitalWrite(ONBOARD_LED, LOW);
-  digitalWrite(CONFIRM_LED_PIN, LOW);
+  // Inisialisasi awal saat boot: kedua valve TERTUTUP (RELAY_CLOSE_STATE)
+  digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
+  digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE);
+  digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+  digitalWrite(CONFIRM_LED_PIN, LED_OFF_STATE);
 
-  // 1. Baca auth_code dari flash memory (NVS)
+  // 1. Baca konfigurasi dari flash memory (NVS)
   preferences.begin("fertigation", false);
   auth_code = preferences.getString("auth_code", "");
+  ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
+  ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
   preferences.end();
+  Serial.printf("[API] URL API: %s:%d\n", ws_host_str.c_str(), ws_port);
 
   if (auth_code.length() > 0) {
     is_authenticated = true;
@@ -758,12 +891,13 @@ void setup() {
                    "&serial_code=" + String(serial_code) + 
                    "&auth_code=" + auth_code;
 
-    Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", ws_host, ws_port, wsUrl.c_str());
-    webSocket.begin(ws_host, ws_port, wsUrl);
+    Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", ws_host_str.c_str(), ws_port, wsUrl.c_str());
+    webSocket.begin(ws_host_str.c_str(), ws_port, wsUrl);
     webSocket.onEvent(webSocketEvent);
     webSocket.setReconnectInterval(2000);
     webSocket.enableHeartbeat(4000, 1500, 2);
   } else {
+    WiFi.disconnect(); // Hentikan ongoing retry di background agar tidak memblokir scan Wi-Fi
     Serial.println("[Wi-Fi] Belum terhubung ke Wi-Fi. Anda dapat menyambungkannya sekarang via Web Bluetooth!");
   }
 }
@@ -820,9 +954,23 @@ void loop() {
     }
   }
 
-  // Periodic Telemetry status sync to connected BLE client (setiap 3 detik)
-  if (bleDeviceConnected && (now - lastBleStatusUpdate >= 3000)) {
-    lastBleStatusUpdate = now;
-    sendBleStatus();
+  // Auto-close valve 1 timer
+  if (valve1TimerEnd > 0 && now >= valve1TimerEnd) {
+    valve1TimerEnd = 0;
+    digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
+    valve1State = false;
+    Serial.println("[Valve] Valve 1 (GPIO 25) otomatis TERTUTUP (durasi timer selesai)");
+    if (!valve2State) digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+    if (bleDeviceConnected) sendBleStatus();
+  }
+
+  // Auto-close valve 2 timer
+  if (valve2TimerEnd > 0 && now >= valve2TimerEnd) {
+    valve2TimerEnd = 0;
+    digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE);
+    valve2State = false;
+    Serial.println("[Valve] Valve 2 (GPIO 26) otomatis TERTUTUP (durasi timer selesai)");
+    if (!valve1State) digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+    if (bleDeviceConnected) sendBleStatus();
   }
 }

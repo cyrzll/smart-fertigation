@@ -70,7 +70,7 @@ app.post('/command', async (c) => {
 
     const dev = devices[0];
     const valve = valves[0];
-    const gpio = valve.gpio_pin || 25;
+    const gpio = Number(valve.gpio || valve.gpio_pin || 25);
     const durSec = duration_seconds ? Number(duration_seconds) : 5;
     const actionCmd = command === 'CLOSE' ? 'CLOSE' : 'OPEN';
 
