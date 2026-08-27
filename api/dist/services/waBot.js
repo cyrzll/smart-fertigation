@@ -3,13 +3,17 @@ import pino from 'pino';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pool } from '../db.js';
-import { getConnectedDeviceCode, getOnlyConnectedDeviceCode, isDeviceSocketConnected, sendValveCommandToDevice, } from './wsServer.js';
+import { getConnectedDeviceCode, getOnlyConnectedDeviceCode, isDeviceSocketConnected, sendValveCommandToDevice, setTelemetryAlertHandler, } from './wsServer.js';
 let sock = null;
 let qrCodeData = null;
 let connectionState = 'disconnected';
 let connectedUser = null;
 const sessionDir = path.resolve(process.cwd(), 'session');
 const logger = pino({ level: 'silent' });
+const PH_SPIKE_THRESHOLD = 0.5;
+const TDS_SPIKE_THRESHOLD = 200;
+const SENSOR_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+const sensorAlertStates = new Map();
 const formatWibDateTime = (value) => {
     if (!value)
         return 'Belum pernah terhubung';
@@ -43,6 +47,63 @@ const getStatusIndicator = (status) => {
             : '🔴';
     return `${icon} ${label}`;
 };
+const formatDelta = (value, decimals) => `${value >= 0 ? '↑' : '↓'}${Math.abs(value).toFixed(decimals)}`;
+async function handleTelemetrySpike(event) {
+    const stateKey = event.registeredDeviceCode || event.serialCode || event.deviceCode;
+    const previous = sensorAlertStates.get(stateKey);
+    if (!previous) {
+        sensorAlertStates.set(stateKey, { ph: event.ph, tds: event.tds, lastAlertAt: 0 });
+        return;
+    }
+    const phDelta = event.ph != null && previous.ph != null ? event.ph - previous.ph : null;
+    const tdsDelta = event.tds != null && previous.tds != null ? event.tds - previous.tds : null;
+    const phSpiked = phDelta != null && Math.abs(phDelta) >= PH_SPIKE_THRESHOLD;
+    const tdsSpiked = tdsDelta != null && Math.abs(tdsDelta) >= TDS_SPIKE_THRESHOLD;
+    const now = Date.now();
+    sensorAlertStates.set(stateKey, {
+        ph: event.ph ?? previous.ph,
+        tds: event.tds ?? previous.tds,
+        lastAlertAt: previous.lastAlertAt,
+    });
+    if ((!phSpiked && !tdsSpiked) || now - previous.lastAlertAt < SENSOR_ALERT_COOLDOWN_MS)
+        return;
+    const [recipients] = await pool.query(`SELECT DISTINCT uwn.whatsapp_number, u.name, u.uid
+     FROM devices d
+     JOIN users u ON u.id = d.user_id
+     JOIN user_whatsapp_numbers uwn ON uwn.uid = u.uid
+     WHERE uwn.status = 'verified'
+       AND (
+         d.device_code IN (?, ?)
+         OR (d.serial_code = ? AND d.serial_code IS NOT NULL)
+       )`, [event.registeredDeviceCode, event.deviceCode, event.serialCode || '']);
+    if (recipients.length === 0)
+        return;
+    sensorAlertStates.set(stateKey, {
+        ph: event.ph ?? previous.ph,
+        tds: event.tds ?? previous.tds,
+        lastAlertAt: now,
+    });
+    const changes = [];
+    if (phSpiked && phDelta != null) {
+        changes.push(`pH  : ${previous.ph?.toFixed(2)} → ${event.ph?.toFixed(2)} (${formatDelta(phDelta, 2)})`);
+    }
+    if (tdsSpiked && tdsDelta != null) {
+        changes.push(`TDS : ${Math.round(previous.tds)} → ${Math.round(event.tds)} PPM (${formatDelta(tdsDelta, 0)})`);
+    }
+    const message = `⚠️ *PERINGATAN LONJAKAN SENSOR*
+Perangkat: ${event.registeredDeviceCode}
+
+${changes.join('\n')}
+
+Waktu: ${formatWibDateTime(event.createdAt)}
+Segera periksa kondisi air dan larutan nutrisi.`;
+    const results = await Promise.allSettled(recipients.map((recipient) => sendWaMessage(recipient.whatsapp_number, message)));
+    results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+            console.error(`Gagal mengirim notifikasi sensor ke ${recipients[index].whatsapp_number}:`, result.reason);
+        }
+    });
+}
 export function normalizePhoneAndJid(rawInput) {
     let phone = rawInput.split('@')[0].replace(/[^0-9]/g, '');
     if (phone.startsWith('0')) {
@@ -61,6 +122,7 @@ export async function saveWaMessage(chatJid, senderName, senderPhone, body, from
     }
 }
 export async function initWaBot() {
+    setTelemetryAlertHandler(handleTelemetrySpike);
     try {
         if (sock) {
             try {

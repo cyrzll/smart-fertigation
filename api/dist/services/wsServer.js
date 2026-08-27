@@ -5,8 +5,12 @@ const activeDevices = new Map();
 // Store active Dashboard WebSocket connections
 const activeDashboards = new Set();
 const lastDbTelemetryInsert = new Map();
+let telemetryAlertHandler = null;
 let wss = null;
 let pingIntervalStarted = false;
+export function setTelemetryAlertHandler(handler) {
+    telemetryAlertHandler = handler;
+}
 // Broadcast helper to all connected browser dashboards
 export function broadcastToDashboards(data) {
     const payload = JSON.stringify(data);
@@ -216,6 +220,18 @@ export function initWebSocketServer(server) {
                                 created_at: new Date().toISOString(),
                             },
                         });
+                        if (telemetryAlertHandler) {
+                            void telemetryAlertHandler({
+                                deviceCode,
+                                registeredDeviceCode: deviceSocket.telemetryDeviceCode || deviceCode,
+                                serialCode,
+                                ph: ph != null && Number.isFinite(Number(ph)) ? Number(ph) : null,
+                                tds: finalTds != null && Number.isFinite(finalTds) ? Number(finalTds.toFixed(0)) : null,
+                                createdAt: new Date().toISOString(),
+                            }).catch((alertErr) => {
+                                console.error('[WebSocket] Error processing sensor alert:', alertErr.message);
+                            });
+                        }
                     }
                     if (payload.type === 'HEARTBEAT') {
                         ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', time: new Date().toISOString() }));
