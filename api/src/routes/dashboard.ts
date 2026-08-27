@@ -44,6 +44,17 @@ app.get('/', async (c) => {
     );
     const valveCount = valvesCountRes[0]?.count || 0;
 
+    // Ambil data telemetri sensor terbaru (pH, EC, suhu, kelembaban, level air)
+    const [telemetryRes]: any = await pool.query(
+      'SELECT * FROM sensor_telemetry ORDER BY created_at DESC LIMIT 1'
+    );
+    const latestTelemetry = telemetryRes.length > 0 ? telemetryRes[0] : null;
+
+    // Ambil histori 15 pencatatan telemetri terakhir tiap beberapa menit
+    const [recentTelemetries]: any = await pool.query(
+      'SELECT id, device_code, suhu, kelembaban, media, level_air, ec, ph, status, created_at FROM sensor_telemetry ORDER BY created_at DESC LIMIT 15'
+    );
+
     return c.json({
       success: true,
       planting: planting
@@ -58,6 +69,8 @@ app.get('/', async (c) => {
       hst,
       valveCount,
       todaySchedules,
+      latestTelemetry,
+      recentTelemetries: recentTelemetries || [],
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);

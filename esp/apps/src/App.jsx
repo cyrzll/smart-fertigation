@@ -218,6 +218,9 @@ export function App() {
     setIsScanning(true);
     try {
       await bleService.scanWifi();
+      setTimeout(() => {
+        setIsScanning(false);
+      }, 7500);
     } catch (e) {
       setIsScanning(false);
       addToast('error', 'Gagal memindai Wi-Fi: ' + e.message);

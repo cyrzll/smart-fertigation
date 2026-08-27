@@ -28,14 +28,7 @@ export function TelemetryControl({
     26: false,
   });
 
-  const sensors = status.sensors || {
-    suhu: 29.4,
-    kelembaban: 76.0,
-    media: 63.0,
-    level_air: 72.0,
-    ec: 1.8,
-    ph: 6.2,
-  };
+  const sensors = status.sensors || {};
 
   const valves = status.valves || {
     valve1: false,
@@ -55,50 +48,14 @@ export function TelemetryControl({
     }
   };
 
-  const sensorCards = [
-    {
-      title: 'Suhu Udara',
-      value: `${sensors.suhu ?? '--'}°C`,
-      label: 'Optimal: 26-32°C',
-      icon: <Thermometer className="w-4 h-4 text-orange-500" />,
-      badgeBg: 'bg-orange-50 text-orange-700 border-orange-200',
-    },
-    {
-      title: 'Kelembaban',
-      value: `${sensors.kelembaban ?? '--'}%`,
-      label: 'Optimal: 60-80%',
-      icon: <Droplets className="w-4 h-4 text-blue-500" />,
-      badgeBg: 'bg-blue-50 text-blue-700 border-blue-200',
-    },
-    {
-      title: 'Moisture Tanah',
-      value: `${sensors.media ?? '--'}%`,
-      label: 'Optimal: 60-70%',
-      icon: <Sprout className="w-4 h-4 text-[#7BAF5A]" />,
-      badgeBg: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]',
-    },
-    {
-      title: 'Level Tangki',
-      value: `${sensors.level_air ?? '--'}%`,
-      label: 'Minimal 30%',
-      icon: <Waves className="w-4 h-4 text-cyan-500" />,
-      badgeBg: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-    },
-    {
-      title: 'EC Nutrisi',
-      value: `${sensors.ec ?? '--'} mS`,
-      label: 'Optimal: 1.5 - 2.5',
-      icon: <Zap className="w-4 h-4 text-amber-500" />,
-      badgeBg: 'bg-amber-50 text-amber-700 border-amber-200',
-    },
-    {
-      title: 'pH Larutan',
-      value: `${sensors.ph ?? '--'}`,
-      label: 'Optimal: 5.8 - 6.5',
-      icon: <TestTube className="w-4 h-4 text-purple-500" />,
-      badgeBg: 'bg-purple-50 text-purple-700 border-purple-200',
-    },
-  ];
+  const phVal = sensors.ph != null && !isNaN(Number(sensors.ph)) ? Number(sensors.ph) : null;
+  const getPhStatus = (ph) => {
+    if (ph == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
+    if (ph < 5.5) return { label: 'Asam (Rendah)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
+    if (ph <= 6.8) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
+    return { label: 'Basa (Tinggi)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
+  };
+  const phStatus = getPhStatus(phVal);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -110,8 +67,8 @@ export function TelemetryControl({
               <Activity className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Live Sensor Telemetri</h3>
-              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Streaming data realtime via BLE</p>
+              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Live Sensor pH Air (Real)</h3>
+              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Streaming data analog aktual dari GPIO 34 via BLE</p>
             </div>
           </div>
 
@@ -124,25 +81,33 @@ export function TelemetryControl({
           </button>
         </div>
 
-        {/* 6 Sensor Gauges Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
-          {sensorCards.map((card, i) => (
-            <div
-              key={i}
-              className="bg-[#F9FAF6] border border-[#D4DFC8] rounded-xl p-3 sm:p-3.5 flex flex-col justify-between hover:border-[#7BAF5A] transition shadow-2xs"
-            >
-              <div className="flex items-center justify-between gap-1 mb-2">
-                <span className="text-[10px] sm:text-[11px] font-semibold text-[#8A9B7A] truncate">{card.title}</span>
-                <span className="shrink-0">{card.icon}</span>
-              </div>
-              <div>
-                <div className="text-base sm:text-lg font-bold text-[#2D3B2D] font-mono tracking-tight">
-                  {card.value}
-                </div>
-                <div className="text-[9px] sm:text-[10px] text-[#8A9B7A] mt-0.5 truncate">{card.label}</div>
-              </div>
+        {/* Real pH Sensor Card */}
+        <div className="bg-[#F9FAF6] border-2 border-[#C8D9B0] rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <TestTube className="w-5 h-5 text-purple-600" />
+              <span className="text-xs font-bold text-[#2D3B2D]">Sensor pH-4502C (Pin Po)</span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
+                GPIO 34
+              </span>
             </div>
-          ))}
+            <div className="flex items-baseline gap-2 pt-1">
+              <span className="text-3xl sm:text-4xl font-extrabold font-mono text-[#2D3B2D]">
+                {phVal !== null ? phVal.toFixed(2) : '—'}
+              </span>
+              <span className="text-sm font-bold text-[#8A9B7A]">pH</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:items-end gap-2">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${phStatus.color}`}>
+              <span className={`w-2 h-2 rounded-full ${phStatus.dot}`} />
+              <span>{phStatus.label}</span>
+            </span>
+            <span className="text-[11px] text-[#8A9B7A] font-mono">
+              Target Fertigasi: 5.50 - 6.50 pH
+            </span>
+          </div>
         </div>
       </div>
 

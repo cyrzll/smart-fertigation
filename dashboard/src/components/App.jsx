@@ -85,6 +85,8 @@ export const App = () => {
       if (path === '/login' || path === '/register' || path === '/admin' || path === '' || path === '/') {
         setActiveTab('dashboard');
         window.history.replaceState({}, '', '/dashboard');
+      } else if (path === '/devices') {
+        setActiveTab('devices');
       } else if (path === '/schedules') {
         setActiveTab('schedules');
       } else if (path === '/phases') {
@@ -137,6 +139,7 @@ export const App = () => {
     if (typeof window !== 'undefined') {
       const pathMap = {
         dashboard: '/dashboard',
+        devices: '/devices',
         schedules: '/schedules',
         phases: '/phases',
         demo: '/demo',
@@ -240,7 +243,7 @@ export const App = () => {
                 </div>
               </div>
               <button
-                onClick={() => handleSelectTab('settings')}
+                onClick={() => handleSelectTab('devices')}
                 className="shrink-0 bg-[#7BAF5A] hover:bg-[#689849] text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
@@ -250,6 +253,7 @@ export const App = () => {
           )}
 
           {activeTab === 'dashboard' && user?.level !== 'admin' && <DashboardView apiUrl={apiUrl} setActiveTab={handleSelectTab} hasDevice={hasVerifiedDevice} />}
+          {activeTab === 'devices' && <UserSettingsView defaultTab="devices" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} />}
           {activeTab === 'schedules' && <SchedulesView apiUrl={apiUrl} />}
           {activeTab === 'phases' && <GrowthPhasesView apiUrl={apiUrl} />}
           {activeTab === 'demo' && <DemoView apiUrl={apiUrl} />}
@@ -257,7 +261,7 @@ export const App = () => {
           {activeTab === 'valves' && <ValvesView apiUrl={apiUrl} />}
           {activeTab === 'plantings' && <PlantingsView apiUrl={apiUrl} />}
           {activeTab === 'wa' && <WaBotView apiUrl={apiUrl} />}
-          {activeTab === 'settings' && <UserSettingsView apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} />}
+          {activeTab === 'settings' && <UserSettingsView defaultTab="settings" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} />}
           {activeTab === 'users' && user?.level === 'admin' && <UsersView apiUrl={apiUrl} />}
           {(activeTab === 'admin' || user?.level === 'admin') && user?.level === 'admin' ? (
             <AdminCenterView

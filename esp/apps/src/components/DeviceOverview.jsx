@@ -277,6 +277,30 @@ export function DeviceOverview({
             </div>
 
             <form onSubmit={handleSaveApi} className="space-y-4">
+              {/* Preset Buttons */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiHost('192.168.78.81');
+                    setApiPort('3001');
+                  }}
+                  className="flex-1 py-1.5 px-2 bg-[#E8F2DF] hover:bg-[#D4DFC8] border border-[#C8D9B0] text-[#3A6B2A] rounded-lg text-xs font-semibold transition cursor-pointer"
+                >
+                  ⚡ Preset Lokal (192.168.78.81:3001)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiHost('api.tirtaruna.site');
+                    setApiPort('443');
+                  }}
+                  className="flex-1 py-1.5 px-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-lg text-xs font-semibold transition cursor-pointer"
+                >
+                  ☁️ Preset Cloud (api.tirtaruna.site:443)
+                </button>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-[#5A6B5A] mb-1.5">
                   Host / Alamat IP Server
@@ -285,7 +309,7 @@ export function DeviceOverview({
                   type="text"
                   value={apiHost}
                   onChange={(e) => setApiHost(e.target.value)}
-                  placeholder="Contoh: 192.168.1.4 atau api.domain.com"
+                  placeholder="Contoh: 192.168.78.81 atau api.tirtaruna.site"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-[#F9FAF6] border border-[#D4DFC8] focus:border-[#7BAF5A] focus:outline-none text-xs sm:text-sm text-[#2D3B2D] font-mono"
                   required
                 />
@@ -310,7 +334,7 @@ export function DeviceOverview({
               <div className="p-3 bg-[#F9FAF6] border border-[#D4DFC8] rounded-xl text-[11px] text-[#5A6B5A]">
                 <div className="font-semibold text-[#2D3B2D] mb-1">Target WebSocket URL:</div>
                 <div className="font-mono text-[#3A6B2A] break-all">
-                  ws://{apiHost || '192.168.1.4'}:{apiPort || 3001}/ws/device
+                  {apiPort === '443' ? 'wss://' : 'ws://'}{apiHost || '192.168.78.81'}:{apiPort || 3001}/ws/device
                 </div>
               </div>
 

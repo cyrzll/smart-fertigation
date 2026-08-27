@@ -14,12 +14,13 @@ export const Sidebar = ({ activeTab, setActiveTab, user, onLogout }) => {
       ]
     : [
         { id: 'dashboard', label: 'Dashboard', icon: Sprout },
+        { id: 'devices', label: 'Perangkat', icon: Cpu },
+        { id: 'valves', label: 'Valve', icon: Sliders },
         { id: 'schedules', label: 'Jadwal', icon: Calendar },
         { id: 'phases', label: 'Fase', icon: Sprout },
         { id: 'demo', label: 'Demo', icon: PlayCircle },
         { id: 'profiles', label: 'Profil', icon: Layers },
-        { id: 'valves', label: 'Valve', icon: Cpu },
-        { id: 'plantings', label: 'Tanam', icon: Sliders },
+        { id: 'plantings', label: 'Tanam', icon: Droplets },
         { id: 'settings', label: 'Pengaturan', icon: Settings },
         ...(user?.level === 'admin' ? [{ id: 'admin', label: 'Admin', icon: Shield }] : []),
       ];

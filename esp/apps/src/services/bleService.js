@@ -261,13 +261,21 @@ class BleService {
       const jsonStr = JSON.stringify(commandObj);
       const data = this.encoder.encode(jsonStr);
 
-      this.log('TX', jsonStr);
-
-      // Write with response if supported, otherwise writeValue
-      if (this.rxChar.writeValueWithResponse) {
-        await this.rxChar.writeValueWithResponse(data);
-      } else {
-        await this.rxChar.writeValue(data);
+      // Write with response if supported, with fallback to writeValueWithoutResponse
+      try {
+        if (this.rxChar.writeValueWithResponse) {
+          await this.rxChar.writeValueWithResponse(data);
+        } else {
+          await this.rxChar.writeValue(data);
+        }
+      } catch (writeErr) {
+        if (this.rxChar.writeValueWithoutResponse) {
+          await this.rxChar.writeValueWithoutResponse(data);
+        } else if (this.rxChar.writeValue) {
+          await this.rxChar.writeValue(data);
+        } else {
+          throw writeErr;
+        }
       }
 
       return true;

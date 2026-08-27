@@ -5,11 +5,13 @@ import { Sprout, Calendar, PlayCircle, Layers, Cpu, Sliders, Droplets } from 'lu
 export const Navbar = ({ activeTab, setActiveTab }) => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Sprout },
+    { id: 'devices', label: 'Perangkat', icon: Cpu },
+    { id: 'valves', label: 'Master Valve', icon: Sliders },
     { id: 'schedules', label: 'Jadwal', icon: Calendar },
     { id: 'demo', label: 'Mode Demo', icon: PlayCircle },
     { id: 'profiles', label: 'Profil Fertigasi', icon: Layers },
-    { id: 'valves', label: 'Master Valve', icon: Cpu },
-    { id: 'plantings', label: 'Penanaman', icon: Sliders },
+    { id: 'plantings', label: 'Penanaman', icon: Droplets },
+    { id: 'settings', label: 'Pengaturan', icon: Sliders },
   ];
 
   return (

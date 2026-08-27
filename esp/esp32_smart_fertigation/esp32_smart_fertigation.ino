@@ -2,8 +2,8 @@
   =================================================================================
   SMART FERTIGATION AIoT - ESP32 WEBSOCKET & BLE HYBRID FIRMWARE
   =================================================================================
-  Firmware Version : v2.4.1-BLE-WebSocket-Hybrid
-  Release Date     : 26 Agustus 2026
+  Firmware Version : v2.5.0-BLE-WebSocket-Hybrid
+  Release Date     : 27 Agustus 2026
   Compatibility    : ESP32 DevKit V1 / ESP32-WROOM-32 / ESP32-WROOM-DA Module
   =================================================================================
   Features:
@@ -43,7 +43,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.4.1-BLE-WebSocket-Hybrid";
+const char* firmware_version = "v2.5.0-BLE-WebSocket-Hybrid";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -52,8 +52,8 @@ const char* firmware_version = "v2.4.1-BLE-WebSocket-Hybrid";
 String ws_host_str = DEFAULT_WS_HOST;
 uint16_t ws_port = DEFAULT_WS_PORT;
 
-const char* device_code = "ESP-FERTIGASI-01";
-const char* serial_code = "tes123";
+const char* device_code = "ESP-FERTIGASI-02";
+const char* serial_code = "tes123-2";
 
 // BLE GATT UUIDs
 #define BLE_DEVICE_NAME        "ESP32-Fertigation"
@@ -71,6 +71,20 @@ bool is_authenticated = false;
 #define VALVE2_PIN 26       // Relay Valve 2 (Zona B) - GPIO 26
 #define ONBOARD_LED 2       // Onboard Blue LED - GPIO 2
 #define CONFIRM_LED_PIN 4   // External LED Konfirmasi - GPIO 4
+
+// Pin Konfigurasi Sensor Fisik:
+//   - SENSOR_PH_PIN: GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
+//   - SENSOR_DHT_PIN: Sensor Suhu/Kelembaban DHT22 -> [-1 = Belum Terpasang]
+//   - SENSOR_EC_PIN: Sensor EC Nutrisi -> [-1 = Belum Terpasang]
+//   - SENSOR_SOIL_PIN: Sensor Moisture Media Tanam -> [-1 = Belum Terpasang]
+//   - SENSOR_WATER_PIN: Sensor Level Tandon Air -> [-1 = Belum Terpasang]
+#define SENSOR_PH_PIN        34   // Pin Po Modul Sensor pH-4502C
+#define SENSOR_DHT_PIN       -1   // Belum Terpasang (-1)
+#define SENSOR_EC_PIN        -1   // Belum Terpasang (-1)
+#define SENSOR_SOIL_PIN      -1   // Belum Terpasang (-1)
+#define SENSOR_WATER_PIN     -1   // Belum Terpasang (-1)
+
+#define PH_CALIBRATION_OFFSET 0.0 // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
 
 // Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -94,19 +108,91 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastTelemetry = 0;
 unsigned long lastBleStatusUpdate = 0;
 
-// Valve States & Auto-Close Timers
+// Valve States
 bool valve1State = false;
 bool valve2State = false;
-unsigned long valve1TimerEnd = 0;
-unsigned long valve2TimerEnd = 0;
 
-// Sensor Dummy / Telemetry Data
-float sensorSuhu = 29.4;
-float sensorKelembaban = 76.0;
-float sensorMedia = 63.0;
-float sensorLevelAir = 72.0;
-float sensorEC = 1.8;
-float sensorPH = 6.2;
+// Dynamic Valve Timers Structure (Mendukung GPIO 25, 26, 27, dan pin kustom apapun)
+struct DynamicValveTimer {
+  int gpio;
+  unsigned long timerEnd;
+  bool active;
+};
+
+#define MAX_VALVE_TIMERS 16
+DynamicValveTimer dynamicValves[MAX_VALVE_TIMERS];
+
+// Helper function to control any valve pin (supports dynamic GPIOs and auto-close timer)
+void setValvePin(int gpio, bool open, int durationSeconds) {
+  pinMode(gpio, OUTPUT);
+  if (open) {
+    digitalWrite(gpio, RELAY_OPEN_STATE);
+    digitalWrite(ONBOARD_LED, LED_ON_STATE);
+    Serial.printf("[Valve] GPIO %d TERBUKA (Relay LOW, Durasi: %ds)\n", gpio, durationSeconds);
+
+    if (gpio == VALVE1_PIN) valve1State = true;
+    if (gpio == VALVE2_PIN) valve2State = true;
+
+    if (durationSeconds > 0) {
+      unsigned long timerEnd = millis() + ((unsigned long)durationSeconds * 1000);
+      for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
+        if (dynamicValves[i].gpio == gpio || !dynamicValves[i].active) {
+          dynamicValves[i].gpio = gpio;
+          dynamicValves[i].timerEnd = timerEnd;
+          dynamicValves[i].active = true;
+          break;
+        }
+      }
+    }
+  } else {
+    digitalWrite(gpio, RELAY_CLOSE_STATE);
+    Serial.printf("[Valve] GPIO %d TERTUTUP (Relay HIGH)\n", gpio);
+
+    if (gpio == VALVE1_PIN) valve1State = false;
+    if (gpio == VALVE2_PIN) valve2State = false;
+
+    // Matikan timer aktif jika ada untuk GPIO ini
+    for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
+      if (dynamicValves[i].gpio == gpio) {
+        dynamicValves[i].active = false;
+      }
+    }
+
+    // Matikan LED jika tidak ada valve lain yang sedang terbuka
+    bool anyActive = false;
+    for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
+      if (dynamicValves[i].active) {
+        anyActive = true;
+        break;
+      }
+    }
+    if (!anyActive && !valve1State && !valve2State) {
+      digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+    }
+  }
+}
+
+// Sensor Telemetry Data (Real Hardware Reading)
+float sensorPH = 7.0;
+
+// Fungsi Membaca Nilai pH Aktual dari Sensor pH-4502C (Pin Po - GPIO 34)
+float readPHSensor() {
+  int samples = 20;
+  long adcSum = 0;
+  for (int i = 0; i < samples; i++) {
+    adcSum += analogRead(SENSOR_PH_PIN);
+    delay(5);
+  }
+  float avgAdc = (float)adcSum / (float)samples;
+  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
+
+  // Rumus Linear pH-4502C: pH 7.0 ~ 2.50V (dapat dikalibrasi via trimpot modul)
+  // Slope: 5.70 pH/Volt
+  float calculatedPH = 7.0 + ((2.50 - voltage) * 5.70) + PH_CALIBRATION_OFFSET;
+  if (calculatedPH < 0.0) calculatedPH = 0.0;
+  if (calculatedPH > 14.0) calculatedPH = 14.0;
+  return calculatedPH;
+}
 
 void tickLED() {
   digitalWrite(ONBOARD_LED, !digitalRead(ONBOARD_LED));
@@ -158,14 +244,26 @@ void blinkConfirmationLED(int times) {
 }
 
 // =================================================================================
-// BLE Notification & Messaging Helpers
+// BLE Notification & Messaging Helpers (Safe Chunking for Long Payloads)
 // =================================================================================
 void sendBleNotify(String message) {
   if (bleDeviceConnected && pBleTxChar != NULL) {
     // Append newline delimiter for easy client buffer parsing
     String packet = message + "\n";
-    pBleTxChar->setValue((uint8_t*)packet.c_str(), packet.length());
-    pBleTxChar->notify();
+    size_t totalLen = packet.length();
+    size_t chunkSize = 128; // Chunk aman agar payload panjang (seperti WIFI_SCAN_RESULT) tidak terpotong
+
+    if (totalLen <= chunkSize) {
+      pBleTxChar->setValue((uint8_t*)packet.c_str(), totalLen);
+      pBleTxChar->notify();
+    } else {
+      for (size_t offset = 0; offset < totalLen; offset += chunkSize) {
+        size_t len = min(chunkSize, totalLen - offset);
+        pBleTxChar->setValue((uint8_t*)(packet.c_str() + offset), len);
+        pBleTxChar->notify();
+        delay(15);
+      }
+    }
     Serial.printf("[BLE TX] %s\n", message.c_str());
   }
 }
@@ -297,12 +395,10 @@ void sendBleStatus() {
   valves["valve1"] = valve1State;
   valves["valve2"] = valve2State;
 
+  // Update pembacaan aktual sensor pH
+  sensorPH = readPHSensor();
+
   JsonObject sensors = doc.createNestedObject("sensors");
-  sensors["suhu"] = sensorSuhu;
-  sensors["kelembaban"] = sensorKelembaban;
-  sensors["media"] = sensorMedia;
-  sensors["level_air"] = sensorLevelAir;
-  sensors["ec"] = sensorEC;
   sensors["ph"] = sensorPH;
 
   String output;
@@ -317,7 +413,7 @@ void performBleWifiScan() {
   // Pastikan Wi-Fi dalam mode Station & hentikan proses koneksi aktif di background
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  delay(150);
+  delay(100);
 
   int n = WiFi.scanNetworks(false, false);
   Serial.printf("[BLE SCAN] Ditemukan %d jaringan Wi-Fi.\n", n);
@@ -335,7 +431,8 @@ void performBleWifiScan() {
   JsonArray networks = doc.createNestedArray("networks");
 
   if (n > 0) {
-    for (int i = 0; i < n && i < 15; ++i) {
+    // Batasi 10 jaringan terkuat agar transmisi BLE cepat dan stabil
+    for (int i = 0; i < n && i < 10; ++i) {
       JsonObject net = networks.createNestedObject();
       net["ssid"] = WiFi.SSID(i);
       net["rssi"] = WiFi.RSSI(i);
@@ -545,31 +642,8 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
           String action = doc["action"].as<String>();
           int duration = doc["duration"] | 0;
 
-          pinMode(gpio, OUTPUT);
-          if (action == "OPEN" || action == "TEST_OPEN") {
-            digitalWrite(gpio, RELAY_OPEN_STATE);
-            digitalWrite(ONBOARD_LED, LED_ON_STATE);
-
-            if (gpio == VALVE1_PIN) {
-              valve1State = true;
-              valve1TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
-            } else if (gpio == VALVE2_PIN) {
-              valve2State = true;
-              valve2TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
-            }
-          } else {
-            digitalWrite(gpio, RELAY_CLOSE_STATE);
-            if (gpio == VALVE1_PIN) {
-              valve1State = false;
-              valve1TimerEnd = 0;
-            } else if (gpio == VALVE2_PIN) {
-              valve2State = false;
-              valve2TimerEnd = 0;
-            }
-            if (!valve1State && !valve2State) {
-              digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-            }
-          }
+          bool open = (action == "OPEN" || action == "TEST_OPEN");
+          setValvePin(gpio, open, duration);
 
           StaticJsonDocument<256> res;
           res["type"] = "VALVE_RESULT";
@@ -600,7 +674,6 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
 
           if (newHost.length() > 0) {
             saveApiUrl(newHost, (uint16_t)newPort);
-            reconnectWebSocket();
 
             StaticJsonDocument<256> res;
             res["type"] = "API_SET_RESULT";
@@ -612,12 +685,13 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
             serializeJson(res, resStr);
             sendBleNotify(resStr);
             sendBleStatus();
+
+            reconnectWebSocket();
           }
         }
         // 12. RESET_API: Kembalikan URL API ke default
         else if (cmd == "RESET_API") {
           resetApiUrl();
-          reconnectWebSocket();
 
           StaticJsonDocument<256> res;
           res["type"] = "API_RESET_RESULT";
@@ -629,15 +703,27 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
           serializeJson(res, resStr);
           sendBleNotify(resStr);
           sendBleStatus();
+
+          reconnectWebSocket();
         }
       }
     }
 };
 
 // Initialize BLE Server & Advertising
+String dynamicBleName = "";
+
 void setupBLE() {
   Serial.println("\n[BLE] Memulai Inisialisasi Bluetooth Low Energy (BLE)...");
-  BLEDevice::init(BLE_DEVICE_NAME);
+
+  // Buat nama BLE dinamis unik per perangkat berdasarkan MAC address hardware
+  // Contoh output: "ESP32-Fertigation-9444"
+  String macStr = WiFi.macAddress();
+  macStr.replace(":", "");
+  String macSuffix = (macStr.length() >= 4) ? macStr.substring(macStr.length() - 4) : "01";
+  dynamicBleName = String(BLE_DEVICE_NAME) + "-" + macSuffix;
+
+  BLEDevice::init(dynamicBleName.c_str());
   BLEDevice::setMTU(512); // Mendukung payload MTU besar
 
   pBleServer = BLEDevice::createServer();
@@ -668,7 +754,7 @@ void setupBLE() {
   pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
-  Serial.printf("[BLE] BLE Server Berhasil Berjalan! Nama: '%s', Service UUID: %s\n\n", BLE_DEVICE_NAME, SERVICE_UUID);
+  Serial.printf("[BLE] BLE Server Berhasil Berjalan! Nama: '%s', Service UUID: %s\n\n", dynamicBleName.c_str(), SERVICE_UUID);
 }
 
 // =================================================================================
@@ -710,22 +796,20 @@ void sendWsHeartbeat() {
 
 // Send Sensor Telemetry via WebSocket
 void sendWsTelemetry() {
+  // Update pembacaan aktual sensor pH dari pin GPIO 34
+  sensorPH = readPHSensor();
+
   StaticJsonDocument<256> doc;
   doc["type"] = "TELEMETRY";
   doc["device_code"] = device_code;
   doc["auth_code"] = auth_code;
-  doc["suhu"] = sensorSuhu;
-  doc["kelembaban"] = sensorKelembaban;
-  doc["media"] = sensorMedia;
-  doc["level_air"] = sensorLevelAir;
-  doc["ec"] = sensorEC;
   doc["ph"] = sensorPH;
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.println("[WS Telemetry] Data sensor terkirim ke WebSocket server!");
+  Serial.printf("[WS Telemetry] Data Sensor pH Aktual (GPIO 34): %.2f pH\n", sensorPH);
 }
 
 // Send Command Completed confirmation
@@ -789,40 +873,8 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
         int duration = doc["duration"] | 5;
         String cmd = doc["command"].as<String>();
 
-        Serial.printf("[Valve] Perintah %s pada GPIO %d (durasi: %d detik)\n", cmd.c_str(), gpio, duration);
-        int targetPin = gpio;
-        pinMode(targetPin, OUTPUT);
-        pinMode(ONBOARD_LED, OUTPUT);
-
-        if (cmd == "OPEN" || cmd == "TEST_OPEN") {
-          digitalWrite(targetPin, RELAY_OPEN_STATE);
-          digitalWrite(ONBOARD_LED, LED_ON_STATE);
-
-          if (gpio == VALVE1_PIN) {
-            valve1State = true;
-            valve1TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
-            Serial.printf("[Valve] Valve 1 (GPIO %d) TERBUKA (Relay LOW, Timer: %ds)\n", gpio, duration);
-          } else if (gpio == VALVE2_PIN) {
-            valve2State = true;
-            valve2TimerEnd = (duration > 0) ? (millis() + ((unsigned long)duration * 1000)) : 0;
-            Serial.printf("[Valve] Valve 2 (GPIO %d) TERBUKA (Relay LOW, Timer: %ds)\n", gpio, duration);
-          }
-        } else {
-          // CLOSE
-          digitalWrite(targetPin, RELAY_CLOSE_STATE);
-          if (gpio == VALVE1_PIN) {
-            valve1State = false;
-            valve1TimerEnd = 0;
-            Serial.printf("[Valve] Valve 1 (GPIO %d) TERTUTUP (Relay HIGH)\n", gpio);
-          } else if (gpio == VALVE2_PIN) {
-            valve2State = false;
-            valve2TimerEnd = 0;
-            Serial.printf("[Valve] Valve 2 (GPIO %d) TERTUTUP (Relay HIGH)\n", gpio);
-          }
-          if (!valve1State && !valve2State) {
-            digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-          }
-        }
+        bool open = (cmd == "OPEN" || cmd == "TEST_OPEN");
+        setValvePin(gpio, open, duration);
 
         sendWsCommandComplete(cmdId, "Perintah valve berhasil dieksekusi oleh ESP32");
         if (bleDeviceConnected) sendBleStatus();
@@ -886,6 +938,10 @@ void setup() {
   pinMode(VALVE2_PIN, OUTPUT);
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);
+  pinMode(SENSOR_PH_PIN, INPUT);
+
+  analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
+  analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
 
   // Inisialisasi awal saat boot: kedua valve TERTUTUP (RELAY_CLOSE_STATE)
   digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
@@ -899,13 +955,12 @@ void setup() {
   ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
   ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
 
-  // Jika NVS masih menyimpan IP lokal lama atau kosong, otomatis perbarui ke production API default
-  if (ws_host_str.startsWith("192.168.") || ws_host_str.startsWith("10.") || ws_host_str.startsWith("172.") || ws_host_str == "") {
+  // Jika NVS masih kosong, gunakan default
+  if (ws_host_str == "") {
     ws_host_str = DEFAULT_WS_HOST;
     ws_port = DEFAULT_WS_PORT;
     preferences.putString("ws_host", ws_host_str);
     preferences.putUShort("ws_port", ws_port);
-    Serial.println("[API] Migrasi otomatis NVS ke Production API (api.tirtaruna.site:443)");
   }
   preferences.end();
   Serial.printf("[API] URL API Aktif: %s:%d\n", ws_host_str.c_str(), ws_port);
@@ -997,23 +1052,30 @@ void loop() {
     }
   }
 
-  // Auto-close valve 1 timer
-  if (valve1TimerEnd > 0 && now >= valve1TimerEnd) {
-    valve1TimerEnd = 0;
-    digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
-    valve1State = false;
-    Serial.println("[Valve] Valve 1 (GPIO 25) otomatis TERTUTUP (durasi timer selesai)");
-    if (!valve2State) digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-    if (bleDeviceConnected) sendBleStatus();
-  }
+  // Auto-close dynamic valve timers (Mendukung GPIO 25, 26, 27, dan semua pin kustom)
+  for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
+    if (dynamicValves[i].active && now >= dynamicValves[i].timerEnd) {
+      int pin = dynamicValves[i].gpio;
+      dynamicValves[i].active = false;
+      digitalWrite(pin, RELAY_CLOSE_STATE);
 
-  // Auto-close valve 2 timer
-  if (valve2TimerEnd > 0 && now >= valve2TimerEnd) {
-    valve2TimerEnd = 0;
-    digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE);
-    valve2State = false;
-    Serial.println("[Valve] Valve 2 (GPIO 26) otomatis TERTUTUP (durasi timer selesai)");
-    if (!valve1State) digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-    if (bleDeviceConnected) sendBleStatus();
+      if (pin == VALVE1_PIN) valve1State = false;
+      if (pin == VALVE2_PIN) valve2State = false;
+
+      Serial.printf("[Valve] GPIO %d otomatis TERTUTUP (durasi timer selesai)\n", pin);
+
+      bool anyActive = false;
+      for (int j = 0; j < MAX_VALVE_TIMERS; j++) {
+        if (dynamicValves[j].active) {
+          anyActive = true;
+          break;
+        }
+      }
+      if (!anyActive && !valve1State && !valve2State) {
+        digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+      }
+
+      if (bleDeviceConnected) sendBleStatus();
+    }
   }
 }

@@ -30,8 +30,16 @@ const formatWibFull = (dateStr) => {
   }
 };
 
-export const UserSettingsView = ({ user, onUpdateUser }) => {
+export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' }) => {
   const currentUser = user || {};
+  const [activeSubTab, setActiveSubTab] = useState(defaultTab);
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveSubTab(defaultTab);
+    }
+  }, [defaultTab]);
+
   const [name, setName] = useState(currentUser.name || '');
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -643,11 +651,49 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
       {/* Hidden processor for file QR scanning */}
       <div id="qr-file-processor" className="hidden"></div>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-[#2D3B2D]">Pengaturan</h2>
-        <span className="text-xs font-mono text-[#8A9B7A] border border-[#D4DFC8] px-2.5 py-1 rounded-lg">
-          UID: {currentUser.uid || `USR-${String(currentUser.id || 1).padStart(4, '0')}`}
-        </span>
+      {/* Header with Sub-Tab Navigation */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-[#2D3B2D]">
+            {activeSubTab === 'devices' ? 'Manajemen Perangkat ESP32' : 'Pengaturan Profil & Akun'}
+          </h2>
+          <p className="text-xs text-[#8A9B7A] mt-0.5">
+            {activeSubTab === 'devices'
+              ? 'Kelola perangkat mikrokontroler ESP32, pairing serial code, dan verifikasi LED realtime'
+              : 'Kelola informasi profil, kata sandi, dan nomor WhatsApp notifikasi fertigasi'}
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1 bg-white border border-[#D4DFC8] p-1 rounded-xl shadow-xs">
+            <button
+              onClick={() => setActiveSubTab('devices')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeSubTab === 'devices'
+                  ? 'bg-[#E8F2DF] text-[#3A6B2A] border border-[#C8D9B0]'
+                  : 'text-[#5A6B5A] hover:text-[#2D3B2D]'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>Perangkat</span>
+            </button>
+            <button
+              onClick={() => setActiveSubTab('settings')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeSubTab === 'settings'
+                  ? 'bg-[#E8F2DF] text-[#3A6B2A] border border-[#C8D9B0]'
+                  : 'text-[#5A6B5A] hover:text-[#2D3B2D]'
+              }`}
+            >
+              <User className="w-3.5 h-3.5" />
+              <span>Profil & WA</span>
+            </button>
+          </div>
+
+          <span className="text-xs font-mono text-[#8A9B7A] border border-[#D4DFC8] bg-white px-2.5 py-1.5 rounded-xl hidden md:inline-block shadow-xs">
+            UID: {currentUser.uid || `USR-${String(currentUser.id || 1).padStart(4, '0')}`}
+          </span>
+        </div>
       </div>
 
       {notice && (
@@ -659,234 +705,235 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
         </div>
       )}
 
-      {/* Grid: Profile Form & Multi-WhatsApp */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        
-        {/* Left: Profile Form */}
-        <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
-          <div className="flex items-center space-x-2.5 pb-3 border-b border-[#E8EDE0]">
-            <User className="w-4 h-4 text-[#7BAF5A]" />
-            <h3 className="text-sm font-bold text-[#2D3B2D]">Profil Pengguna</h3>
-          </div>
-
-          <form onSubmit={handleUpdateProfile} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Nama Lengkap</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="w-full bg-[#FAFAF7] border border-[#D4DFC8] text-[#2D3B2D] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#7BAF5A] transition"
-              />
+      {/* View 1: Profile Form & Multi-WhatsApp */}
+      {activeSubTab === 'settings' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Left: Profile Form */}
+          <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
+            <div className="flex items-center space-x-2.5 pb-3 border-b border-[#E8EDE0]">
+              <User className="w-4 h-4 text-[#7BAF5A]" />
+              <h3 className="text-sm font-bold text-[#2D3B2D]">Profil Pengguna</h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <form onSubmit={handleUpdateProfile} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Username</label>
-                <div className="relative">
-                  <AtSign className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
-                  <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Email</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className={inputCls} />
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Nomor HP</label>
-              <div className="relative">
-                <Phone className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
-                <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="081234567890" className={inputCls} />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Password Baru (opsional)</label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={savingProfile}
-              className="w-full border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold py-2.5 rounded-xl text-sm transition flex items-center justify-center space-x-2"
-            >
-              <Save className="w-4 h-4" />
-              <span>{savingProfile ? 'Menyimpan...' : 'Simpan Profil'}</span>
-            </button>
-          </form>
-        </div>
-
-        {/* Right: Multi-WhatsApp */}
-        <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[#E8EDE0]">
-            <div className="flex items-center space-x-2.5">
-              <Smartphone className="w-4 h-4 text-[#7BAF5A]" />
-              <h3 className="text-sm font-bold text-[#2D3B2D]">Nomor WhatsApp</h3>
-            </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium border border-[#D4DFC8] text-[#5A6B5A]">
-              {waNumbers.length}/3
-            </span>
-          </div>
-
-          {/* Add WA Number */}
-          {waNumbers.length < 3 ? (
-            <form onSubmit={handleAddWaNumber} className="bg-[#FAFAF7] border border-[#E8EDE0] rounded-xl p-3.5 space-y-2.5">
-              <div className="flex items-center space-x-2">
+                <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Nama Lengkap</label>
                 <input
                   type="text"
-                  value={newWaPhone}
-                  onChange={(e) => setNewWaPhone(e.target.value)}
-                  placeholder="Nomor WA (081234567890)"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   required
-                  className="w-full bg-white border border-[#D4DFC8] text-[#2D3B2D] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#7BAF5A] transition"
+                  className="w-full bg-[#FAFAF7] border border-[#D4DFC8] text-[#2D3B2D] rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#7BAF5A] transition"
                 />
-                <button
-                  type="submit"
-                  disabled={addingWa}
-                  className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3.5 py-2 rounded-lg text-xs transition flex items-center space-x-1 shrink-0"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Kirim OTP</span>
-                </button>
               </div>
-            </form>
-          ) : (
-            <div className="border border-amber-300 rounded-xl p-3 text-xs text-amber-600 flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>Maksimal 3 nomor telah tercapai.</span>
-            </div>
-          )}
 
-          {/* List Numbers */}
-          <div className="space-y-2.5">
-            {waNumbers.length > 0 ? (
-              waNumbers.map((num) => (
-                <div key={num.id} className="border border-[#E8EDE0] rounded-xl p-3.5 space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-sm font-semibold text-[#2D3B2D]">+{num.whatsapp_number}</span>
-                    {num.status === 'verified' ? (
-                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-[#C8D9B0] text-[#5A8A3A]">
-                        <Check className="w-3 h-3" />
-                        <span>Verified</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-amber-300 text-amber-600">
-                        <Clock className="w-3 h-3" />
-                        <span>Pending</span>
-                      </span>
-                    )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Username</label>
+                  <div className="relative">
+                    <AtSign className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
+                    <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Email</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
+                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className={inputCls} />
+                  </div>
+                </div>
+              </div>
 
-                  {/* OTP verification for pending */}
-                  {num.status === 'pending' && (
-                    <div className="pt-2.5 border-t border-[#E8EDE0] space-y-2">
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="text"
-                          maxLength={6}
-                          value={otpInput[num.id] || ''}
-                          onChange={(e) => setOtpInput((prev) => ({ ...prev, [num.id]: e.target.value }))}
-                          placeholder="Kode OTP"
-                          className="w-full bg-white border border-[#D4DFC8] text-[#2D3B2D] rounded-lg px-3 py-1.5 text-xs font-mono text-center focus:outline-none focus:border-[#7BAF5A]"
-                        />
-                        <button
-                          onClick={() => handleVerifyOtp(num.id)}
-                          disabled={verifyingOtp[num.id]}
-                          className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shrink-0"
-                        >
-                          Verifikasi
-                        </button>
+              <div>
+                <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Nomor HP</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
+                  <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="081234567890" className={inputCls} />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#5A6B5A] mb-1.5">Password Baru (opsional)</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-[#9CAF88] absolute left-3 top-3" />
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingProfile}
+                className="w-full border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold py-2.5 rounded-xl text-sm transition flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>{savingProfile ? 'Menyimpan...' : 'Simpan Profil'}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Right: Multi-WhatsApp */}
+          <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E8EDE0]">
+              <div className="flex items-center space-x-2.5">
+                <Smartphone className="w-4 h-4 text-[#7BAF5A]" />
+                <h3 className="text-sm font-bold text-[#2D3B2D]">Nomor WhatsApp</h3>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium border border-[#D4DFC8] text-[#5A6B5A]">
+                {waNumbers.length}/3
+              </span>
+            </div>
+
+            {/* Add WA Number */}
+            {waNumbers.length < 3 ? (
+              <form onSubmit={handleAddWaNumber} className="bg-[#FAFAF7] border border-[#E8EDE0] rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={newWaPhone}
+                    onChange={(e) => setNewWaPhone(e.target.value)}
+                    placeholder="Nomor WA (081234567890)"
+                    required
+                    className="w-full bg-white border border-[#D4DFC8] text-[#2D3B2D] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#7BAF5A] transition"
+                  />
+                  <button
+                    type="submit"
+                    disabled={addingWa}
+                    className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3.5 py-2 rounded-lg text-xs transition flex items-center space-x-1 shrink-0 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Kirim OTP</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="border border-amber-300 rounded-xl p-3 text-xs text-amber-600 flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Maksimal 3 nomor telah tercapai.</span>
+              </div>
+            )}
+
+            {/* List Numbers */}
+            <div className="space-y-2.5">
+              {waNumbers.length > 0 ? (
+                waNumbers.map((num) => (
+                  <div key={num.id} className="border border-[#E8EDE0] rounded-xl p-3.5 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-sm font-semibold text-[#2D3B2D]">+{num.whatsapp_number}</span>
+                      {num.status === 'verified' ? (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-[#C8D9B0] text-[#5A8A3A]">
+                          <Check className="w-3 h-3" />
+                          <span>Verified</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-amber-300 text-amber-600">
+                          <Clock className="w-3 h-3" />
+                          <span>Pending</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* OTP verification for pending */}
+                    {num.status === 'pending' && (
+                      <div className="pt-2.5 border-t border-[#E8EDE0] space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="text"
+                            maxLength={6}
+                            value={otpInput[num.id] || ''}
+                            onChange={(e) => setOtpInput((prev) => ({ ...prev, [num.id]: e.target.value }))}
+                            placeholder="Kode OTP"
+                            className="w-full bg-white border border-[#D4DFC8] text-[#2D3B2D] rounded-lg px-3 py-1.5 text-xs font-mono text-center focus:outline-none focus:border-[#7BAF5A]"
+                          />
+                          <button
+                            onClick={() => handleVerifyOtp(num.id)}
+                            disabled={verifyingOtp[num.id]}
+                            className="border border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shrink-0 cursor-pointer"
+                          >
+                            Verifikasi
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <button
+                            onClick={() => handleResendOtp(num.id)}
+                            className="text-[#5A8A3A] hover:underline font-medium flex items-center space-x-1 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Kirim Ulang</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteWaNumber(num.id)}
+                            className="text-red-500 hover:underline font-medium flex items-center space-x-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
                       </div>
+                    )}
 
-                      <div className="flex items-center justify-between">
+                    {num.status === 'verified' && (
+                      <div className="pt-2 border-t border-[#E8EDE0] flex items-center justify-between">
+                        <span className="text-[#5A8A3A] font-medium flex items-center space-x-1">
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>ESP32 Active</span>
+                        </span>
                         <button
-                          onClick={() => handleResendOtp(num.id)}
-                          className="text-[#5A8A3A] hover:underline font-medium flex items-center space-x-1"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>Kirim Ulang</span>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteWaNumber(num.id)}
-                          className="text-red-500 hover:underline font-medium flex items-center space-x-1"
+                          onClick={() => setConfirmDeleteWaId(num.id)}
+                          className="text-red-500 hover:underline font-medium flex items-center space-x-1 cursor-pointer"
                         >
                           <Trash2 className="w-3 h-3" />
                           <span>Hapus</span>
                         </button>
                       </div>
-                    </div>
-                  )}
-
-                  {num.status === 'verified' && (
-                    <div className="pt-2 border-t border-[#E8EDE0] flex items-center justify-between">
-                      <span className="text-[#5A8A3A] font-medium flex items-center space-x-1">
-                        <ShieldCheck className="w-3 h-3" />
-                        <span>ESP32 Active</span>
-                      </span>
-                      <button
-                        onClick={() => setConfirmDeleteWaId(num.id)}
-                        className="text-red-500 hover:underline font-medium flex items-center space-x-1 cursor-pointer"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Hapus</span>
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="border border-[#E8EDE0] rounded-xl p-5 text-center text-[#8A9B7A] text-xs">
+                  Belum ada nomor WhatsApp terdaftar.
                 </div>
-              ))
-            ) : (
-              <div className="border border-[#E8EDE0] rounded-xl p-5 text-center text-[#8A9B7A] text-xs">
-                Belum ada nomor WhatsApp terdaftar.
-              </div>
-            )}
-          </div>
-        </div>
-
-      </div>
-
-      {/* Section 3: ESP32 Device Management Table */}
-      <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
-          <div className="flex items-center space-x-2.5">
-            <Cpu className="w-5 h-5 text-[#7BAF5A]" />
-            <div>
-              <h3 className="text-base font-bold text-[#2D3B2D]">Perangkat ESP32</h3>
-              <p className="text-xs text-[#8A9B7A]">Konfirmasi nomor seri dengan kedipan LED modul ESP32</p>
+              )}
             </div>
           </div>
-
-          <div className="flex items-center space-x-2">
-            <span className="px-2.5 py-1 rounded-full text-xs font-medium border border-[#D4DFC8] text-[#5A6B5A]">
-              {devices.length} Perangkat
-            </span>
-
-            {/* Pair & Add Device Modal Button */}
-            <button
-              onClick={() => {
-                setPairStep(1);
-                setInputSerialCode('tes123');
-                setInputDevCode('');
-                setInputDevName('');
-                setSelectedBlinkCount(null);
-                setPendingDeviceId(null);
-                setShowPairModal(true);
-              }}
-              className="border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Perangkat ESP32</span>
-            </button>
-          </div>
         </div>
+      )}
+
+      {/* View 2: ESP32 Device Management Table */}
+      {activeSubTab === 'devices' && (
+        <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
+            <div className="flex items-center space-x-2.5">
+              <Cpu className="w-5 h-5 text-[#7BAF5A]" />
+              <div>
+                <h3 className="text-base font-bold text-[#2D3B2D]">Perangkat ESP32 Terdaftar</h3>
+                <p className="text-xs text-[#8A9B7A]">Konfirmasi nomor seri dengan kedipan LED modul ESP32</p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <span className="px-2.5 py-1 rounded-full text-xs font-medium border border-[#D4DFC8] text-[#5A6B5A]">
+                {devices.length} Perangkat
+              </span>
+
+              {/* Pair & Add Device Modal Button */}
+              <button
+                onClick={() => {
+                  setPairStep(1);
+                  setInputSerialCode('tes123');
+                  setInputDevCode('');
+                  setInputDevName('');
+                  setSelectedBlinkCount(null);
+                  setPendingDeviceId(null);
+                  setShowPairModal(true);
+                }}
+                className="border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Pairing / Tambah ESP32</span>
+              </button>
+            </div>
+          </div>
 
         {/* Devices Table (Streamlined) */}
         <div className="overflow-x-auto">
@@ -901,98 +948,66 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
                 <th className="py-3 px-3.5 text-right rounded-r-lg">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#F0F4EA]">
+            <tbody className="divide-y divide-[#E8EDE0]">
               {devices.length > 0 ? (
                 devices.map((d, index) => {
-                  const online = isOnline(d);
-                  const isLiveWs = isWsConnected && (wsOnlineDevices.has(d.device_code) || (d.serial_code && wsOnlineDevices.has(d.serial_code)));
-                  const isVerified = d.status === 'verified';
-
                   return (
-                    <tr 
-                      key={d.id} 
-                      className="hover:bg-[#F9FAF6] transition-colors cursor-pointer"
-                      onClick={() => setSelectedDeviceDetail(d)}
-                    >
-                      <td className="py-3.5 px-3.5 text-xs text-[#8A9B7A] font-mono">
-                        {index + 1}
-                      </td>
-                      <td className="py-3.5 px-3.5">
-                        <div className="font-bold text-[#2D3B2D] text-sm">{d.name}</div>
-                        <div className="flex items-center space-x-2 mt-0.5">
-                          <span className="font-mono text-xs text-[#5A8A3A] font-bold">{d.device_code}</span>
-                          {d.serial_code && (
-                            <span className="text-[10px] text-[#8A9B7A] font-mono">Seri: {d.serial_code}</span>
-                          )}
+                    <tr key={d.id} className="hover:bg-[#FAFAF7] transition">
+                      <td className="py-3 px-3.5 font-mono text-xs text-[#8A9B7A]">{index + 1}</td>
+                      <td className="py-3 px-3.5">
+                        <div className="flex items-center space-x-2">
+                          <div className="p-1.5 rounded-lg bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
+                            <Cpu className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="font-bold text-[#2D3B2D] text-sm block">{d.name}</span>
+                            <span className="text-[11px] font-mono text-[#8A9B7A]">{d.device_code}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="py-3.5 px-3.5" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => handleToggleMode(d)}
-                          title="Klik untuk ubah mode"
-                          className={`px-2.5 py-0.5 rounded-lg border text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
-                            d.mode === 'AUTO' 
-                              ? 'border-[#7BAF5A] text-[#3A6B2A] hover:bg-[#F0F4EA]' 
-                              : 'border-amber-400 text-amber-700 hover:bg-amber-50'
-                          }`}
-                        >
-                          <Sliders className="w-3 h-3" />
-                          <span>{d.mode || 'AUTO'}</span>
-                        </button>
+                      <td className="py-3 px-3.5">
+                        <span className="px-2 py-0.5 rounded text-[11px] font-semibold border border-[#D4DFC8] text-[#5A6B5A]">
+                          {d.mode || 'AUTO'}
+                        </span>
                       </td>
-                      <td className="py-3.5 px-3.5 text-center" onClick={(e) => e.stopPropagation()}>
-                        {isVerified ? (
-                          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-medium border border-[#C8D9B0] text-[#5A8A3A] bg-[#F0F4EA]">
+                      <td className="py-3 px-3.5 text-center">
+                        {d.status === 'verified' ? (
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-medium border border-[#C8D9B0] text-[#3A6B2A] bg-[#E8F2DF]">
                             <Check className="w-3 h-3" />
-                            <span>Verified</span>
+                            <span>Terverifikasi</span>
                           </span>
                         ) : (
-                          <button
-                            onClick={() => {
-                              setPendingDeviceId(d.id);
-                              setInputSerialCode(d.serial_code || 'tes123');
-                              setInputDevCode(d.device_code);
-                              setInputDevName(d.name);
-                              setSelectedBlinkCount(null);
-                              setPairStep(3);
-                              setShowPairModal(true);
-                            }}
-                            className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-medium border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition cursor-pointer"
-                            title="Klik untuk konfirmasi kedipan LED"
-                          >
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-medium border border-amber-300 text-amber-700 bg-amber-50">
                             <Clock className="w-3 h-3" />
-                            <span>Belum</span>
-                          </button>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-3.5">
-                        {online ? (
-                          <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border border-[#C8D9B0] text-[#5A8A3A] bg-[#F0F4EA]">
-                            <span className="w-2 h-2 rounded-full bg-[#7BAF5A] animate-ping" />
-                            <span>{isLiveWs ? 'Online (Live WS)' : 'Online'}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-medium border border-[#D4DFC8] text-[#8A9B7A]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                            <span>Offline</span>
+                            <span>Pending</span>
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <td className="py-3 px-3.5">
+                        <div className="flex items-center space-x-2">
+                          <span className={`w-2.5 h-2.5 rounded-full ${isOnline(d) ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                          <span className={`text-xs font-bold ${isOnline(d) ? 'text-emerald-800' : 'text-slate-500'}`}>
+                            {isOnline(d) ? 'ONLINE' : 'OFFLINE'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3.5 text-right">
                         <div className="flex items-center justify-end space-x-1.5">
                           <button
-                            onClick={() => setSelectedDeviceDetail(d)}
-                            className="p-1.5 rounded-lg border border-[#7BAF5A] text-[#3A6B2A] hover:bg-[#F0F4EA] transition flex items-center space-x-1 text-xs font-semibold cursor-pointer"
-                            title="Lihat Detail & Tes LED"
+                            onClick={() => {
+                              setSelectedDeviceDetail(d);
+                              setLedNotice(null);
+                            }}
+                            className="p-1.5 rounded-lg border border-[#7BAF5A] text-[#3A6B2A] hover:bg-[#E8F2DF] transition cursor-pointer"
+                            title="Detail & Tes LED"
                           >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Detail & Test</span>
+                            <Lightbulb className="w-3.5 h-3.5 text-[#7BAF5A]" />
                           </button>
                           <button
                             onClick={() => {
                               setEditingDevice(d);
-                              setEditDevName(d.name);
-                              setEditDevCode(d.device_code);
+                              setEditDevName(d.name || '');
+                              setEditDevCode(d.device_code || '');
                               setEditDevSerial(d.serial_code || '');
                               setEditDevMode(d.mode || 'AUTO');
                             }}
@@ -1016,7 +1031,7 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
               ) : (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-[#8A9B7A] text-xs">
-                    {loadingDevices ? 'Memuat data perangkat...' : 'Belum ada perangkat ESP32 yang terhubung. Klik tombol "Tambah Perangkat ESP32" di atas.'}
+                    {loadingDevices ? 'Memuat data perangkat...' : 'Belum ada perangkat ESP32 yang terhubung. Klik tombol "Pairing / Tambah ESP32" di atas.'}
                   </td>
                 </tr>
               )}
@@ -1024,6 +1039,7 @@ export const UserSettingsView = ({ user, onUpdateUser }) => {
           </table>
         </div>
       </div>
+      )}
 
       {/* ========================================================================= */}
       {/* DEVICE DETAIL & LED CONTROL MODAL                                         */}

@@ -202,6 +202,43 @@ export function initWebSocketServer(server: HttpServer) {
             telemetry: payload.type === 'TELEMETRY' ? payload : undefined,
           });
 
+          if (payload.type === 'TELEMETRY') {
+            const { suhu, kelembaban, media, level_air, ec, ph, status } = payload;
+            try {
+              await pool.query(
+                'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                  deviceCode,
+                  suhu != null ? Number(suhu) : null,
+                  kelembaban != null ? Number(kelembaban) : null,
+                  media != null ? Number(media) : null,
+                  level_air != null ? Number(level_air) : null,
+                  ec != null ? Number(ec) : null,
+                  ph != null ? Number(ph) : null,
+                  status || 'Normal',
+                ]
+              );
+            } catch (dbErr: any) {
+              console.error('[WebSocket] Error saving sensor telemetry:', dbErr.message);
+            }
+
+            broadcastToDashboards({
+              type: 'SENSOR_TELEMETRY',
+              device_code: deviceCode,
+              serial_code: serialCode,
+              telemetry: {
+                suhu,
+                kelembaban,
+                media,
+                level_air,
+                ec,
+                ph,
+                status: status || 'Normal',
+                created_at: new Date().toISOString(),
+              },
+            });
+          }
+
           if (payload.type === 'HEARTBEAT') {
             ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', time: new Date().toISOString() }));
           } else if (payload.type === 'COMMAND_COMPLETE') {
