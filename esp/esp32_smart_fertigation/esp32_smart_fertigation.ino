@@ -73,18 +73,19 @@ bool is_authenticated = false;
 #define CONFIRM_LED_PIN 4   // External LED Konfirmasi - GPIO 4
 
 // Pin Konfigurasi Sensor Fisik:
-//   - SENSOR_PH_PIN: GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
-//   - SENSOR_DHT_PIN: Sensor Suhu/Kelembaban DHT22 -> [-1 = Belum Terpasang]
-//   - SENSOR_EC_PIN: Sensor EC Nutrisi -> [-1 = Belum Terpasang]
-//   - SENSOR_SOIL_PIN: Sensor Moisture Media Tanam -> [-1 = Belum Terpasang]
-//   - SENSOR_WATER_PIN: Sensor Level Tandon Air -> [-1 = Belum Terpasang]
-#define SENSOR_PH_PIN        34   // Pin Po Modul Sensor pH-4502C
-#define SENSOR_DHT_PIN       -1   // Belum Terpasang (-1)
-#define SENSOR_EC_PIN        -1   // Belum Terpasang (-1)
-#define SENSOR_SOIL_PIN      -1   // Belum Terpasang (-1)
-#define SENSOR_WATER_PIN     -1   // Belum Terpasang (-1)
+//   - SENSOR_PH_PIN  : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
+//   - SENSOR_TDS_PIN : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
+//
+// Pinout Sensor TDS Meter V1.0:
+//   - '+' : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
+//   - '-' : Ground                 -> Hubungkan ke GND ESP32
+//   - 'A' : Output Analog TDS      -> Hubungkan ke GPIO 32 (D32 / ADC1) ESP32
+#define SENSOR_PH_PIN          34   // Pin Po Modul Sensor pH-4502C
+#define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
 
-#define PH_CALIBRATION_OFFSET 0.0 // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
+#define PH_CALIBRATION_OFFSET  0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
+#define TDS_CALIBRATION_FACTOR 1.0  // Faktor kalibrasi TDS (default 1.0)
+#define WATER_TEMP_ESTIMATE    25.0 // Suhu estimasi air tandon (25.0 °C untuk kompensasi suhu TDS)
 
 // Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -111,6 +112,8 @@ unsigned long lastBleStatusUpdate = 0;
 // Valve States
 bool valve1State = false;
 bool valve2State = false;
+unsigned long valve1AutoCloseTime = 0;
+unsigned long valve2AutoCloseTime = 0;
 
 // Dynamic Valve Timers Structure (Mendukung GPIO 25, 26, 27, dan pin kustom apapun)
 struct DynamicValveTimer {
@@ -174,14 +177,20 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
 
 // Sensor Telemetry Data (Real Hardware Reading)
 float sensorPH = 7.0;
+float sensorTDS = 0.0;
+float sensorEC = 0.0;
 
-// Fungsi Membaca Nilai pH Aktual dari Sensor pH-4502C (Pin Po - GPIO 34)
+unsigned long lastSensorCheck = 0;
+float lastSentPH = -999.0;
+float lastSentTDS = -999.0;
+
+// Fungsi Membaca Nilai pH Aktual Cepat dari Sensor pH-4502C (Pin Po - GPIO 34)
 float readPHSensor() {
-  int samples = 20;
+  const int samples = 15;
   long adcSum = 0;
   for (int i = 0; i < samples; i++) {
     adcSum += analogRead(SENSOR_PH_PIN);
-    delay(5);
+    delayMicroseconds(200); // Sampling instan non-blocking
   }
   float avgAdc = (float)adcSum / (float)samples;
   float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
@@ -192,6 +201,47 @@ float readPHSensor() {
   if (calculatedPH < 0.0) calculatedPH = 0.0;
   if (calculatedPH > 14.0) calculatedPH = 14.0;
   return calculatedPH;
+}
+
+// Fungsi Membaca Nilai TDS Aktual Cepat (PPM) dari Sensor TDS Meter V1.0 (Pin A - GPIO 32)
+float readTDSSensor() {
+  const int samples = 15;
+  int analogBuffer[15];
+
+  for (int i = 0; i < samples; i++) {
+    analogBuffer[i] = analogRead(SENSOR_TDS_PIN);
+    delayMicroseconds(200); // Sampling instan non-blocking
+  }
+
+  // Median filtering cepat untuk menyaring noise spike analog
+  for (int i = 0; i < samples - 1; i++) {
+    for (int j = i + 1; j < samples; j++) {
+      if (analogBuffer[i] > analogBuffer[j]) {
+        int temp = analogBuffer[i];
+        analogBuffer[i] = analogBuffer[j];
+        analogBuffer[j] = temp;
+      }
+    }
+  }
+
+  float avgAdc = 0;
+  for (int i = 3; i < samples - 3; i++) {
+    avgAdc += analogBuffer[i];
+  }
+  avgAdc /= (samples - 6);
+
+  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
+
+  // Kompensasi suhu larutan: fComp = 1.0 + 0.02 * (T - 25.0)
+  float compensationCoefficient = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  float compensationVoltage = voltage / compensationCoefficient;
+
+  // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
+  // TDS (ppm) = (133.42 * V^3 - 255.86 * V^2 + 857.39 * V) * 0.5 * factor
+  float calculatedTDS = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5 * TDS_CALIBRATION_FACTOR;
+
+  if (calculatedTDS < 0.0) calculatedTDS = 0.0;
+  return calculatedTDS;
 }
 
 void tickLED() {
@@ -395,11 +445,15 @@ void sendBleStatus() {
   valves["valve1"] = valve1State;
   valves["valve2"] = valve2State;
 
-  // Update pembacaan aktual sensor pH
+  // Update pembacaan aktual sensor pH dan TDS
   sensorPH = readPHSensor();
+  sensorTDS = readTDSSensor();
+  sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
 
   JsonObject sensors = doc.createNestedObject("sensors");
   sensors["ph"] = sensorPH;
+  sensors["tds"] = sensorTDS;
+  sensors["ec"] = sensorEC;
 
   String output;
   serializeJson(doc, output);
@@ -796,20 +850,22 @@ void sendWsHeartbeat() {
 
 // Send Sensor Telemetry via WebSocket
 void sendWsTelemetry() {
-  // Update pembacaan aktual sensor pH dari pin GPIO 34
-  sensorPH = readPHSensor();
+  lastSentPH = sensorPH;
+  lastSentTDS = sensorTDS;
 
   StaticJsonDocument<256> doc;
   doc["type"] = "TELEMETRY";
   doc["device_code"] = device_code;
   doc["auth_code"] = auth_code;
   doc["ph"] = sensorPH;
+  doc["tds"] = sensorTDS;
+  doc["ec"] = sensorEC;
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Data Sensor pH Aktual (GPIO 34): %.2f pH\n", sensorPH);
+  Serial.printf("[WS Telemetry] Data Aktual: pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorPH, sensorTDS, sensorEC);
 }
 
 // Send Command Completed confirmation
@@ -939,6 +995,7 @@ void setup() {
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);
   pinMode(SENSOR_PH_PIN, INPUT);
+  pinMode(SENSOR_TDS_PIN, INPUT);
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
@@ -1044,11 +1101,28 @@ void loop() {
     }
   }
 
-  // Kirim Telemetri Sensor setiap 15 detik ke WebSocket
-  if (now - lastTelemetry >= 15000 || lastTelemetry == 0) {
-    lastTelemetry = now;
-    if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
-      sendWsTelemetry();
+  // 1. Cek pembacaan sensor setiap 800 ms (Cepat & Responsif)
+  if (now - lastSensorCheck >= 800 || lastSensorCheck == 0) {
+    lastSensorCheck = now;
+    float curPH = readPHSensor();
+    float curTDS = readTDSSensor();
+
+    // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk)
+    bool significantChange = (fabs(curPH - lastSentPH) >= 0.08) || (fabs(curTDS - lastSentTDS) >= 12.0);
+
+    // Kirim seketika jika ada perubahan nyata (instan) ATAU interval periodik 2.5 detik
+    if (significantChange || (now - lastTelemetry >= 2500) || (lastTelemetry == 0)) {
+      lastTelemetry = now;
+      sensorPH = curPH;
+      sensorTDS = curTDS;
+      sensorEC = sensorTDS / 500.0;
+
+      if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
+        sendWsTelemetry();
+      }
+      if (bleDeviceConnected) {
+        sendBleStatus();
+      }
     }
   }
 

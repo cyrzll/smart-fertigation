@@ -7,6 +7,7 @@ interface DeviceSocket {
   deviceCode: string;
   serialCode?: string;
   authCode?: string;
+  telemetryDeviceCode?: string;
   connectedAt: Date;
 }
 
@@ -15,6 +16,7 @@ const activeDevices = new Map<string, DeviceSocket>();
 
 // Store active Dashboard WebSocket connections
 const activeDashboards = new Set<WebSocket>();
+const lastDbTelemetryInsert = new Map<string, number>();
 
 let wss: WebSocketServer | null = null;
 let pingIntervalStarted = false;
@@ -142,6 +144,7 @@ export function initWebSocketServer(server: HttpServer) {
         deviceCode,
         serialCode,
         authCode,
+        telemetryDeviceCode: deviceCode,
         connectedAt: new Date(),
       };
 
@@ -152,6 +155,16 @@ export function initWebSocketServer(server: HttpServer) {
 
       // Update DB last_seen = NOW()
       try {
+        const [registeredDevices]: any = await pool.query(
+          `SELECT device_code
+           FROM devices
+           WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL)
+           ORDER BY (device_code = ?) DESC
+           LIMIT 1`,
+          [deviceCode, serialCode || '', deviceCode]
+        );
+        deviceSocket.telemetryDeviceCode = registeredDevices[0]?.device_code || deviceCode;
+
         await pool.query(`
           UPDATE devices
           SET last_seen = NOW(),
@@ -203,23 +216,32 @@ export function initWebSocketServer(server: HttpServer) {
           });
 
           if (payload.type === 'TELEMETRY') {
-            const { suhu, kelembaban, media, level_air, ec, ph, status } = payload;
-            try {
-              await pool.query(
-                'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [
-                  deviceCode,
-                  suhu != null ? Number(suhu) : null,
-                  kelembaban != null ? Number(kelembaban) : null,
-                  media != null ? Number(media) : null,
-                  level_air != null ? Number(level_air) : null,
-                  ec != null ? Number(ec) : null,
-                  ph != null ? Number(ph) : null,
-                  status || 'Normal',
-                ]
-              );
-            } catch (dbErr: any) {
-              console.error('[WebSocket] Error saving sensor telemetry:', dbErr.message);
+            const { suhu, kelembaban, media, level_air, ec, ph, tds, status } = payload;
+            const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
+            const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
+
+            const nowTime = Date.now();
+            const lastInsert = lastDbTelemetryInsert.get(deviceCode) || 0;
+            if (nowTime - lastInsert >= 10000) {
+              lastDbTelemetryInsert.set(deviceCode, nowTime);
+              try {
+                await pool.query(
+                  'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                  [
+                    deviceSocket.telemetryDeviceCode || deviceCode,
+                    suhu != null ? Number(suhu) : null,
+                    kelembaban != null ? Number(kelembaban) : null,
+                    media != null ? Number(media) : null,
+                    level_air != null ? Number(level_air) : null,
+                    finalEc != null ? Number(finalEc.toFixed(2)) : null,
+                    ph != null ? Number(ph) : null,
+                    finalTds != null ? Number(finalTds.toFixed(0)) : null,
+                    status || 'Normal',
+                  ]
+                );
+              } catch (dbErr: any) {
+                console.error('[WebSocket] Error saving sensor telemetry:', dbErr.message);
+              }
             }
 
             broadcastToDashboards({
@@ -231,8 +253,9 @@ export function initWebSocketServer(server: HttpServer) {
                 kelembaban,
                 media,
                 level_air,
-                ec,
-                ph,
+                ec: finalEc != null ? Number(finalEc.toFixed(2)) : null,
+                ph: ph != null ? Number(ph) : null,
+                tds: finalTds != null ? Number(finalTds.toFixed(0)) : null,
                 status: status || 'Normal',
                 created_at: new Date().toISOString(),
               },
@@ -399,4 +422,17 @@ export function sendLedControlToDevice(
 
 export function isDeviceSocketConnected(deviceCode?: string, serialCode?: string): boolean {
   return findDeviceSocket(deviceCode, serialCode) !== null;
+}
+
+export function getConnectedDeviceCode(deviceCode?: string, serialCode?: string): string | null {
+  return findDeviceSocket(deviceCode, serialCode)?.deviceCode || null;
+}
+
+export function getOnlyConnectedDeviceCode(): string | null {
+  const connectedDevices = new Set<DeviceSocket>();
+  for (const device of activeDevices.values()) {
+    if (device.ws.readyState === WebSocket.OPEN) connectedDevices.add(device);
+  }
+  if (connectedDevices.size !== 1) return null;
+  return Array.from(connectedDevices)[0]?.deviceCode || null;
 }

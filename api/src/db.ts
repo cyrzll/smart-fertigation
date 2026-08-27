@@ -235,23 +235,28 @@ export async function initDb() {
       CREATE TABLE IF NOT EXISTS sensor_telemetry (
         id INT AUTO_INCREMENT PRIMARY KEY,
         device_code VARCHAR(255) DEFAULT 'ESP-FERTIGASI-01',
-        suhu FLOAT DEFAULT 29.4,
-        kelembaban FLOAT DEFAULT 76.0,
-        media FLOAT DEFAULT 63.0,
-        level_air FLOAT DEFAULT 72.0,
-        ec FLOAT DEFAULT 1.8,
-        ph FLOAT DEFAULT 6.2,
+        suhu FLOAT DEFAULT NULL,
+        kelembaban FLOAT DEFAULT NULL,
+        media FLOAT DEFAULT NULL,
+        level_air FLOAT DEFAULT NULL,
+        ec FLOAT DEFAULT NULL,
+        ph FLOAT DEFAULT 7.0,
+        tds FLOAT DEFAULT NULL,
         status VARCHAR(50) DEFAULT 'Normal',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_created_at (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    try {
+      await conn.query('ALTER TABLE sensor_telemetry ADD COLUMN tds FLOAT NULL AFTER ph');
+    } catch (_) {}
+
     const [sensorCount]: any = await conn.query('SELECT COUNT(*) as count FROM sensor_telemetry');
     if (sensorCount[0].count === 0) {
       await conn.query(
-        'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ['ESP-FERTIGASI-01', 29.4, 76.0, 63.0, 72.0, 1.8, 6.2, 'Normal']
+        'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ['ESP-FERTIGASI-01', null, null, null, null, 1.8, 6.2, 900.0, 'Normal']
       );
     }
 

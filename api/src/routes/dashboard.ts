@@ -50,9 +50,33 @@ app.get('/', async (c) => {
     );
     const latestTelemetry = telemetryRes.length > 0 ? telemetryRes[0] : null;
 
-    // Ambil histori 15 pencatatan telemetri terakhir tiap beberapa menit
+    // Ambil satu pencatatan terbaru untuk setiap menit agar status tidak berulang
+    // saat ESP32 mengirim telemetri beberapa kali dalam menit yang sama.
     const [recentTelemetries]: any = await pool.query(
-      'SELECT id, device_code, suhu, kelembaban, media, level_air, ec, ph, status, created_at FROM sensor_telemetry ORDER BY created_at DESC LIMIT 15'
+      `SELECT st.id, st.device_code, st.suhu, st.kelembaban, st.media,
+              st.level_air, st.ec, st.ph, st.tds, st.status, st.created_at
+       FROM sensor_telemetry st
+       INNER JOIN (
+         SELECT MAX(id) AS id
+         FROM sensor_telemetry
+         GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d %H:%i')
+         ORDER BY MAX(created_at) DESC
+         LIMIT 15
+       ) per_minute ON per_minute.id = st.id
+       ORDER BY st.created_at DESC`
+    );
+
+    // Rata-rata per jam, dipisahkan berdasarkan tanggal, untuk grafik 7 hari terakhir.
+    const [hourlyTelemetries]: any = await pool.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
+              HOUR(created_at) AS hour,
+              ROUND(AVG(ph), 2) AS avg_ph,
+              ROUND(AVG(COALESCE(tds, ec * 500)), 0) AS avg_tds,
+              COUNT(*) AS sample_count
+       FROM sensor_telemetry
+       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+       GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d'), HOUR(created_at)
+       ORDER BY day DESC, hour ASC`
     );
 
     return c.json({
@@ -71,6 +95,7 @@ app.get('/', async (c) => {
       todaySchedules,
       latestTelemetry,
       recentTelemetries: recentTelemetries || [],
+      hourlyTelemetries: hourlyTelemetries || [],
     });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { 
   Sprout, Calendar, Clock, Cpu, ArrowRight, RefreshCw, CheckCircle2, 
@@ -6,6 +6,18 @@ import {
   AlertTriangle, Sparkles, TrendingUp
 } from 'lucide-react';
 import { actions } from 'astro:actions';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 const formatWibTime = (dateStr) => {
   if (!dateStr) return '-';
@@ -36,12 +48,140 @@ const formatWibDate = (dateStr) => {
   }
 };
 
+const getWibMinuteKey = (dateStr) => {
+  if (!dateStr) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date(dateStr));
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}`;
+  } catch (_) {
+    return String(dateStr).slice(0, 16);
+  }
+};
+
+const formatChartDay = (day) => {
+  if (!day) return '-';
+  const [year, month, date] = day.split('-').map(Number);
+  return new Intl.DateTimeFormat('id-ID', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(new Date(Date.UTC(year, month - 1, date)));
+};
+
+const HourlyComparisonChart = ({ rows }) => {
+  if (!rows.some((row) => row.ph !== null || row.tds !== null)) {
+    return <div className="h-56 flex items-center justify-center text-xs text-[#8A9B7A]">Belum ada data per jam pada hari ini.</div>;
+  }
+
+  const chartData = {
+    labels: rows.map((row) => `${String(row.hour).padStart(2, '0')}:00`),
+    datasets: [
+      {
+        label: 'Rata-rata pH',
+        data: rows.map((row) => row.ph),
+        borderColor: '#5A8A3A',
+        backgroundColor: '#5A8A3A',
+        yAxisID: 'yPh',
+        tension: 0.35,
+        spanGaps: true,
+        pointRadius: 3.5,
+        pointHoverRadius: 5,
+        borderWidth: 2.5,
+      },
+      {
+        label: 'Rata-rata TDS',
+        data: rows.map((row) => row.tds),
+        borderColor: '#D97706',
+        backgroundColor: '#D97706',
+        yAxisID: 'yTds',
+        tension: 0.35,
+        spanGaps: true,
+        pointRadius: 3.5,
+        pointHoverRadius: 5,
+        borderWidth: 2.5,
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        padding: 10,
+        callbacks: {
+          label: (context) => {
+            if (context.raw == null) return null;
+            return context.dataset.yAxisID === 'yPh'
+              ? ` pH: ${Number(context.raw).toFixed(2)}`
+              : ` TDS: ${Math.round(Number(context.raw))} PPM`;
+          },
+          footer: (items) => {
+            const index = items[0]?.dataIndex;
+            return index != null ? `${rows[index].samples} sampel pada jam ini` : '';
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: { color: '#F1F4ED' },
+        ticks: { color: '#8A9B7A', font: { size: 10 }, maxRotation: 0 },
+        title: { display: true, text: 'Jam (WIB)', color: '#8A9B7A', font: { size: 11 } },
+      },
+      yPh: {
+        type: 'linear',
+        position: 'left',
+        min: 0,
+        max: 14,
+        grid: { color: '#E8EDE0', borderDash: [4, 4] },
+        ticks: { color: '#5A8A3A', font: { size: 10 } },
+        title: { display: true, text: 'pH', color: '#5A8A3A', font: { size: 11, weight: 'bold' } },
+      },
+      yTds: {
+        type: 'linear',
+        position: 'right',
+        min: 0,
+        max: 2000,
+        grid: { drawOnChartArea: false },
+        ticks: { color: '#D97706', font: { size: 10 } },
+        title: { display: true, text: 'TDS (PPM)', color: '#D97706', font: { size: 11, weight: 'bold' } },
+      },
+    },
+  };
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="h-72 min-w-[720px]">
+        <Line data={chartData} options={chartOptions} aria-label="Grafik perbandingan rata-rata pH dan TDS per jam" />
+      </div>
+    </div>
+  );
+};
+
 export const DashboardView = ({ apiUrl, setActiveTab }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isLiveWs, setIsLiveWs] = useState(false);
   const [liveTelemetry, setLiveTelemetry] = useState(null);
+  const [selectedChartDay, setSelectedChartDay] = useState(null);
 
   const fetchDashboardData = async (isManual = false) => {
     try {
@@ -135,10 +275,12 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
                   created_at: msg.telemetry.created_at || new Date().toISOString(),
                 };
                 const existing = prev.recentTelemetries || [];
+                const newMinute = getWibMinuteKey(newRec.created_at);
+                const uniqueExisting = existing.filter((row) => getWibMinuteKey(row.created_at) !== newMinute);
                 return {
                   ...prev,
                   latestTelemetry: newRec,
-                  recentTelemetries: [newRec, ...existing.slice(0, 14)],
+                  recentTelemetries: [newRec, ...uniqueExisting].slice(0, 15),
                 };
               });
             } else if (msg.type === 'DEVICE_STATUS' && msg.telemetry) {
@@ -170,11 +312,8 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
   const currentTelemetry = liveTelemetry || data?.latestTelemetry || {};
 
   const phVal = currentTelemetry.ph != null && !isNaN(Number(currentTelemetry.ph)) ? Number(currentTelemetry.ph) : null;
-  const ecVal = currentTelemetry.ec != null && !isNaN(Number(currentTelemetry.ec)) ? Number(currentTelemetry.ec) : null;
-  const suhuVal = currentTelemetry.suhu != null && !isNaN(Number(currentTelemetry.suhu)) ? Number(currentTelemetry.suhu) : null;
-  const kelembabanVal = currentTelemetry.kelembaban != null && !isNaN(Number(currentTelemetry.kelembaban)) ? Number(currentTelemetry.kelembaban) : null;
-  const mediaVal = currentTelemetry.media != null && !isNaN(Number(currentTelemetry.media)) ? Number(currentTelemetry.media) : null;
-  const levelAirVal = currentTelemetry.level_air != null && !isNaN(Number(currentTelemetry.level_air)) ? Number(currentTelemetry.level_air) : null;
+  const tdsVal = currentTelemetry.tds != null && !isNaN(Number(currentTelemetry.tds)) ? Number(currentTelemetry.tds) : (currentTelemetry.ec != null ? Number(currentTelemetry.ec) * 500.0 : null);
+  const ecVal = currentTelemetry.ec != null && !isNaN(Number(currentTelemetry.ec)) ? Number(currentTelemetry.ec) : (tdsVal != null ? tdsVal / 500.0 : null);
 
   // Status helper untuk nilai pH
   const getPhStatus = (ph) => {
@@ -184,7 +323,45 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
     return { label: 'Basa (Tinggi)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
   };
 
+  // Status helper untuk nilai TDS / EC Nutrisi
+  const getTdsStatus = (tds) => {
+    if (tds == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
+    if (tds < 700) return { label: 'Rendah (Kurang Pekat)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
+    if (tds <= 1400) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
+    return { label: 'Pekat (Tinggi)', color: 'bg-red-50 text-red-700 border-red-300', dot: 'bg-red-500' };
+  };
+
   const phStatus = getPhStatus(phVal);
+  const tdsStatus = getTdsStatus(tdsVal);
+
+  const minuteTelemetries = useMemo(() => {
+    const seenMinutes = new Set();
+    return (data?.recentTelemetries || []).filter((row) => {
+      const minute = getWibMinuteKey(row.created_at) || `id-${row.id}`;
+      if (seenMinutes.has(minute)) return false;
+      seenMinutes.add(minute);
+      return true;
+    });
+  }, [data?.recentTelemetries]);
+
+  const chartDays = useMemo(
+    () => [...new Set((data?.hourlyTelemetries || []).map((row) => row.day))].sort().reverse(),
+    [data?.hourlyTelemetries]
+  );
+  const activeChartDay = chartDays.includes(selectedChartDay) ? selectedChartDay : chartDays[0];
+  const hourlyChartRows = useMemo(() => {
+    const rowsByHour = new Map(
+      (data?.hourlyTelemetries || [])
+        .filter((row) => row.day === activeChartDay)
+        .map((row) => [Number(row.hour), {
+          hour: Number(row.hour),
+          ph: row.avg_ph != null && !isNaN(Number(row.avg_ph)) ? Number(row.avg_ph) : null,
+          tds: row.avg_tds != null && !isNaN(Number(row.avg_tds)) ? Number(row.avg_tds) : null,
+          samples: Number(row.sample_count) || 0,
+        }])
+    );
+    return Array.from({ length: 24 }, (_, hour) => rowsByHour.get(hour) || { hour, ph: null, tds: null, samples: 0 });
+  }, [data?.hourlyTelemetries, activeChartDay]);
 
   return (
     <motion.div
@@ -198,7 +375,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
         <div>
           <h2 className="text-xl font-bold text-[#2D3B2D]">Dashboard Monitoring</h2>
           <p className="text-xs text-[#8A9B7A] mt-0.5">
-            Pemantauan telemetri pH air dan jadwal fertigasi realtime
+            Pemantauan telemetri pH, TDS nutrisi, dan jadwal fertigasi realtime
           </p>
         </div>
 
@@ -231,14 +408,14 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
       )}
 
       {/* ========================================================================= */}
-      {/* REAL-TIME SENSOR pH AIR (FOCUSED MONITORING)                               */}
+      {/* REAL-TIME SENSOR TELEMETRY (pH AIR & TDS NUTRISI)                         */}
       {/* ========================================================================= */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
             <Activity className="w-4 h-4 text-[#7BAF5A]" />
             <h3 className="text-sm font-bold text-[#2D3B2D] uppercase tracking-wider">
-              Telemetri Sensor pH Realtime
+              Telemetri Sensor Realtime
             </h3>
           </div>
           <span className="text-[11px] text-[#8A9B7A] font-mono">
@@ -246,18 +423,18 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           
-          {/* Card Utama: SENSOR pH AIR (2 Kolom) */}
-          <div className="lg:col-span-2 bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
+          {/* Card 1: SENSOR pH AIR (Modul pH-4502C - GPIO 34) */}
+          <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center space-x-2">
-                <div className="p-2 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0]">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0]">
                   <Droplets className="w-5 h-5" />
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor pH Air Tandon</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Modul pH-4502C pada GPIO 34 (ADC1)</p>
+                  <p className="text-[11px] text-[#8A9B7A]">Modul pH-4502C (Pin Po - GPIO 34)</p>
                 </div>
               </div>
 
@@ -279,7 +456,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
               <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
                 <span className="text-amber-700 font-semibold">0 (Asam)</span>
                 <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
-                  5.5 - 6.5 (Rentang Ideal Fertigasi)
+                  Target Ideal: 5.50 - 6.50
                 </span>
                 <span className="text-blue-700 font-semibold">14 (Basa)</span>
               </div>
@@ -302,41 +479,65 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
             </div>
           </div>
 
-          {/* Card Panduan & Rekomendasi Nutrisi (1 Kolom) */}
-          <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-3">
-            <div>
-              <div className="flex items-center space-x-2 pb-2.5 border-b border-[#E8EDE0]">
-                <Sparkles className="w-4 h-4 text-[#7BAF5A]" />
-                <h4 className="text-xs font-bold text-[#2D3B2D] uppercase tracking-wider">
-                  Panduan Kualitas Air
-                </h4>
-              </div>
-
-              <div className="mt-3 space-y-2 text-xs text-[#5A6B5A]">
-                <div className="p-2.5 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0]">
-                  <span className="text-[#8A9B7A] block text-[10px] font-medium uppercase">Target Fertigasi</span>
-                  <span className="font-bold text-[#2D3B2D] text-sm mt-0.5 block">pH 5.50 – 6.50</span>
+          {/* Card 2: SENSOR TDS & EC NUTRISI (TDS Meter V1.0 - GPIO 35) */}
+          <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-200">
+                  <Gauge className="w-5 h-5" />
                 </div>
-
-                <p className="text-[11px] leading-relaxed text-[#5A6B5A]">
-                  {phVal === null ? (
-                    'Menunggu data telemetri dari mikrokontroler ESP32...'
-                  ) : phVal < 5.5 ? (
-                    '⚠️ pH air terlalu asam. Disarankan menambahkan larutan pH Up agar akar tanaman dapat menyerap unsur hara secara optimal.'
-                  ) : phVal <= 6.8 ? (
-                    '✅ pH air dalam rentang ideal. Penyerapan unsur N-P-K dan mikronutrisi oleh tanaman berjalan optimal.'
-                  ) : (
-                    '⚠️ pH air cenderung basa. Disarankan menambahkan larutan pH Down / asam nitrat encer untuk menurunkan ke rentang 6.0.'
-                  )}
-                </p>
+                <div>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor TDS & EC Nutrisi</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">TDS Meter V1.0 (Pin A - GPIO 32)</p>
+                </div>
               </div>
+
+              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${tdsStatus.color}`}>
+                <span className={`w-2 h-2 rounded-full ${tdsStatus.dot}`} />
+                <span>{tdsStatus.label}</span>
+              </span>
             </div>
 
-            <div className="pt-2 border-t border-[#E8EDE0] flex items-center justify-between text-[11px] text-[#8A9B7A]">
-              <span>Status Probe:</span>
-              <span className="font-semibold text-[#3A6B2A]">
-                {phVal !== null ? 'Terhubung (GPIO 34)' : 'Tidak Terhubung'}
-              </span>
+            <div className="flex flex-wrap items-baseline gap-3 my-2">
+              <div className="flex items-baseline space-x-1.5">
+                <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                  {tdsVal !== null ? Math.round(tdsVal) : '—'}
+                </span>
+                {tdsVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">PPM</span>}
+              </div>
+
+              {ecVal !== null && (
+                <div className="px-2.5 py-1 rounded-lg bg-[#FAFAF7] border border-[#D4DFC8] font-mono text-xs font-bold text-[#3A6B2A]">
+                  ~{ecVal.toFixed(2)} mS/cm EC
+                </div>
+              )}
+            </div>
+
+            {/* Visual Gauge Bar Rentang TDS 0 - 2000 PPM */}
+            <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
+              <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
+                <span className="text-slate-500">0 PPM</span>
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
+                  Target Melon: 800 - 1400 PPM
+                </span>
+                <span className="text-red-700 font-semibold">2000 PPM</span>
+              </div>
+              <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+                {/* Target optimal range indicator (800 - 1400 / 2000 = 40% - 70%) */}
+                <div
+                  className="absolute left-[40%] w-[30%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
+                  title="Rentang Optimal Nutrisi Melon (800 - 1400 PPM)"
+                />
+                {/* Current Value Marker */}
+                {tdsVal !== null && (
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      tdsVal < 700 ? 'bg-amber-500' : tdsVal <= 1400 ? 'bg-[#7BAF5A]' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(4, (tdsVal / 2000) * 100))}%` }}
+                  />
+                )}
+              </div>
             </div>
           </div>
 
@@ -393,7 +594,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
       </div>
 
       {/* ========================================================================= */}
-      {/* RIWAYAT PENCATATAN TELEMETRI pH BERKALA                                   */}
+      {/* RIWAYAT PENCATATAN TELEMETRI SENSOR BERKALA (pH & TDS)                    */}
       {/* ========================================================================= */}
       <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-xs space-y-3.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#E8EDE0]">
@@ -402,14 +603,14 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
               <TrendingUp className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#2D3B2D]">Riwayat Pemantauan Sensor pH Berkala</h3>
-              <p className="text-[11px] text-[#8A9B7A]">Pencatatan data otomatis setiap beberapa menit dari ESP32</p>
+              <h3 className="text-sm font-bold text-[#2D3B2D]">Riwayat Pemantauan Sensor pH & TDS Berkala</h3>
+              <p className="text-[11px] text-[#8A9B7A]">Satu status terbaru per menit dari ESP32</p>
             </div>
           </div>
 
           <div className="flex items-center space-x-2">
             <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg border border-[#D4DFC8] bg-[#FAFAF7] text-[#5A6B5A]">
-              {data?.recentTelemetries?.length || 0} Rekaman Terakhir
+              {minuteTelemetries.length} Rekaman Terakhir
             </span>
           </div>
         </div>
@@ -419,18 +620,23 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
             <thead>
               <tr className="border-b border-[#E8EDE0] text-xs font-semibold text-[#8A9B7A] bg-[#FAFAF7]">
                 <th className="py-2.5 px-3 rounded-l-lg">Waktu (WIB)</th>
-                <th className="py-2.5 px-3">Nilai Sensor pH</th>
-                <th className="py-2.5 px-3">Kategori pH</th>
-                <th className="py-2.5 px-3">Target Ideal</th>
+                <th className="py-2.5 px-3">Sensor pH Air</th>
+                <th className="py-2.5 px-3">Status pH</th>
+                <th className="py-2.5 px-3">Sensor TDS / EC Nutrisi</th>
+                <th className="py-2.5 px-3">Status Nutrisi</th>
                 <th className="py-2.5 px-3">Perangkat</th>
                 <th className="py-2.5 px-3 text-right rounded-r-lg">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E8EDE0]">
-              {data?.recentTelemetries && data.recentTelemetries.length > 0 ? (
-                data.recentTelemetries.map((row, idx) => {
+              {minuteTelemetries.length > 0 ? (
+                minuteTelemetries.map((row, idx) => {
                   const rowPh = row.ph != null && !isNaN(Number(row.ph)) ? Number(row.ph) : null;
-                  const st = getPhStatus(rowPh);
+                  const rowTds = row.tds != null && !isNaN(Number(row.tds)) ? Number(row.tds) : (row.ec != null ? Number(row.ec) * 500 : null);
+                  const rowEc = row.ec != null && !isNaN(Number(row.ec)) ? Number(row.ec) : (rowTds != null ? rowTds / 500 : null);
+                  const stPh = getPhStatus(rowPh);
+                  const stTds = getTdsStatus(rowTds);
+
                   return (
                     <tr key={row.id || idx} className="hover:bg-[#FAFAF7] transition text-xs">
                       <td className="py-2.5 px-3 font-mono font-medium text-[#2D3B2D]">
@@ -446,13 +652,32 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
                         )}
                       </td>
                       <td className="py-2.5 px-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${st.color}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1 ${st.dot}`} />
-                          <span>{st.label}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stPh.color}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1 ${stPh.dot}`} />
+                          <span>{stPh.label}</span>
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-[#5A6B5A]">
-                        5.50 – 6.50
+                      <td className="py-2.5 px-3">
+                        {rowTds !== null ? (
+                          <div className="flex items-baseline space-x-1.5">
+                            <span className="font-mono font-bold text-sm text-[#2D3B2D]">
+                              {Math.round(rowTds)} PPM
+                            </span>
+                            {rowEc !== null && (
+                              <span className="text-[10px] font-mono text-[#8A9B7A]">
+                                ({rowEc.toFixed(2)} mS)
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 font-mono">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stTds.color}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1 ${stTds.dot}`} />
+                          <span>{stTds.label}</span>
+                        </span>
                       </td>
                       <td className="py-2.5 px-3 font-mono text-[#5A6B5A]">
                         {row.device_code || 'ESP-FERTIGASI-02'}
@@ -468,7 +693,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={6} className="py-6 text-center text-[#8A9B7A] text-xs">
+                  <td colSpan={7} className="py-6 text-center text-[#8A9B7A] text-xs">
                     {loading ? 'Memuat data telemetri...' : 'Belum ada rekaman telemetri. Data akan otomatis tercatat saat ESP32 terhubung.'}
                   </td>
                 </tr>
@@ -476,6 +701,43 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* GRAFIK PERBANDINGAN RATA-RATA SENSOR PER JAM                              */}
+      {/* ========================================================================= */}
+      <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
+          <div>
+            <h3 className="text-sm font-bold text-[#2D3B2D]">Perbandingan pH & TDS per Jam</h3>
+            <p className="text-[11px] text-[#8A9B7A]">Rata-rata pembacaan setiap jam, dipisahkan per hari</p>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {chartDays.map((day) => (
+              <button
+                key={day}
+                type="button"
+                onClick={() => setSelectedChartDay(day)}
+                className={`shrink-0 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition cursor-pointer ${
+                  day === activeChartDay
+                    ? 'bg-[#5A8A3A] border-[#5A8A3A] text-white'
+                    : 'bg-white border-[#D4DFC8] text-[#5A6B5A] hover:border-[#7BAF5A]'
+                }`}
+              >
+                {formatChartDay(day)}
+              </button>
+            ))}
+            {chartDays.length === 0 && <span className="text-[11px] text-[#8A9B7A]">Belum ada hari yang dapat ditampilkan</span>}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-[11px] font-medium text-[#5A6B5A]">
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#5A8A3A]" />Rata-rata pH</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-amber-600" />Rata-rata TDS</span>
+          {activeChartDay && <span className="ml-auto font-mono text-[#8A9B7A]">{formatChartDay(activeChartDay)}</span>}
+        </div>
+
+        <HourlyComparisonChart rows={hourlyChartRows} />
       </div>
 
       {/* ========================================================================= */}

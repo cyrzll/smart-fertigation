@@ -1,0 +1,372 @@
+import { WebSocketServer, WebSocket } from 'ws';
+import { pool } from '../db.js';
+// Store active ESP32 WebSocket connections
+const activeDevices = new Map();
+// Store active Dashboard WebSocket connections
+const activeDashboards = new Set();
+const lastDbTelemetryInsert = new Map();
+let wss = null;
+let pingIntervalStarted = false;
+// Broadcast helper to all connected browser dashboards
+export function broadcastToDashboards(data) {
+    const payload = JSON.stringify(data);
+    for (const client of activeDashboards) {
+        if (client.readyState === WebSocket.OPEN) {
+            try {
+                client.send(payload);
+            }
+            catch (err) {
+                console.error('[WebSocket] Error sending to dashboard:', err.message);
+            }
+        }
+    }
+}
+// Get array of unique online device codes
+export function getOnlineDeviceCodes() {
+    const codes = new Set();
+    for (const dev of activeDevices.values()) {
+        if (dev.deviceCode)
+            codes.add(dev.deviceCode);
+        if (dev.serialCode)
+            codes.add(dev.serialCode);
+    }
+    return Array.from(codes);
+}
+export function initWebSocketServer(server) {
+    // Allow WebSocket connections on /ws/device and /ws/dashboard
+    wss = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (request, socket, head) => {
+        const pathname = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`).pathname;
+        if (pathname === '/ws/device' || pathname === '/ws/dashboard' || pathname.startsWith('/ws')) {
+            wss?.handleUpgrade(request, socket, head, (ws) => {
+                wss?.emit('connection', ws, request);
+            });
+        }
+    });
+    // Start ping heartbeat interval to catch dead sockets immediately (within 3.5s)
+    if (!pingIntervalStarted) {
+        pingIntervalStarted = true;
+        setInterval(() => {
+            for (const [code, dev] of Array.from(activeDevices.entries())) {
+                if (code.startsWith('serial_'))
+                    continue; // Skip secondary key
+                if (dev.ws.isAlive === false) {
+                    console.log(`🔌 [WebSocket] Heartbeat timeout on device: ${dev.deviceCode} (${dev.serialCode || 'No Serial'}) -> Marking OFFLINE`);
+                    try {
+                        dev.ws.terminate();
+                    }
+                    catch (_) { }
+                    activeDevices.delete(dev.deviceCode);
+                    if (dev.serialCode)
+                        activeDevices.delete(`serial_${dev.serialCode}`);
+                    broadcastToDashboards({
+                        type: 'DEVICE_STATUS',
+                        device_code: dev.deviceCode,
+                        serial_code: dev.serialCode,
+                        is_online: false,
+                        last_seen: new Date().toISOString(),
+                    });
+                    continue;
+                }
+                dev.ws.isAlive = false;
+                try {
+                    dev.ws.ping();
+                }
+                catch (_) { }
+            }
+        }, 3500);
+    }
+    wss.on('connection', async (ws, req) => {
+        try {
+            const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+            const pathname = url.pathname;
+            ws.isAlive = true;
+            ws.on('pong', () => {
+                ws.isAlive = true;
+            });
+            // =========================================================================
+            // 1. DASHBOARD BROWSER WEBSOCKET CLIENT (/ws/dashboard)
+            // =========================================================================
+            if (pathname === '/ws/dashboard') {
+                console.log('💻 [WebSocket] Dashboard client connected!');
+                activeDashboards.add(ws);
+                // Send current snapshot of online devices
+                const onlineList = getOnlineDeviceCodes();
+                ws.send(JSON.stringify({
+                    type: 'DEVICES_ONLINE_SNAPSHOT',
+                    online_devices: onlineList,
+                    server_time: new Date().toISOString(),
+                }));
+                ws.on('close', () => {
+                    activeDashboards.delete(ws);
+                    console.log('💻 [WebSocket] Dashboard client disconnected.');
+                });
+                ws.on('error', () => {
+                    activeDashboards.delete(ws);
+                });
+                return;
+            }
+            // =========================================================================
+            // 2. ESP32 DEVICE WEBSOCKET CLIENT (/ws/device)
+            // =========================================================================
+            const deviceCode = url.searchParams.get('device_code') || 'ESP-FERTIGASI-01';
+            const serialCode = url.searchParams.get('serial_code') || 'tes123';
+            const authCode = url.searchParams.get('auth_code') || '';
+            console.log(`\n🔌 [WebSocket] ESP32 Connected! Device: ${deviceCode} (Serial: ${serialCode})`);
+            const deviceSocket = {
+                ws,
+                deviceCode,
+                serialCode,
+                authCode,
+                telemetryDeviceCode: deviceCode,
+                connectedAt: new Date(),
+            };
+            activeDevices.set(deviceCode, deviceSocket);
+            if (serialCode) {
+                activeDevices.set(`serial_${serialCode}`, deviceSocket);
+            }
+            // Update DB last_seen = NOW()
+            try {
+                const [registeredDevices] = await pool.query(`SELECT device_code
+           FROM devices
+           WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL)
+           ORDER BY (device_code = ?) DESC
+           LIMIT 1`, [deviceCode, serialCode || '', deviceCode]);
+                deviceSocket.telemetryDeviceCode = registeredDevices[0]?.device_code || deviceCode;
+                await pool.query(`
+          UPDATE devices
+          SET last_seen = NOW(),
+              serial_code = COALESCE(?, serial_code),
+              auth_code = COALESCE(?, auth_code)
+          WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL)
+        `, [serialCode || null, authCode || null, deviceCode, serialCode || '']);
+            }
+            catch (err) {
+                console.error('[WebSocket] Error updating device in DB:', err.message);
+            }
+            // Broadcast to all Dashboards that device is ONLINE
+            broadcastToDashboards({
+                type: 'DEVICE_STATUS',
+                device_code: deviceCode,
+                serial_code: serialCode,
+                is_online: true,
+                last_seen: new Date().toISOString(),
+            });
+            // Send initial welcome message to ESP32
+            ws.send(JSON.stringify({
+                type: 'WELCOME',
+                message: 'Connected to Smart Fertigation WebSocket Server',
+                device_code: deviceCode,
+                server_time: new Date().toISOString(),
+            }));
+            ws.on('message', async (data) => {
+                try {
+                    ws.isAlive = true;
+                    const payload = JSON.parse(data.toString());
+                    console.log(`📩 [WebSocket] Message from ${deviceCode}:`, payload);
+                    // Update last_seen in DB
+                    await pool.query('UPDATE devices SET last_seen = NOW() WHERE device_code = ? OR (serial_code = ? AND serial_code IS NOT NULL)', [deviceCode, serialCode || '']);
+                    // Notify dashboards of active device
+                    broadcastToDashboards({
+                        type: 'DEVICE_STATUS',
+                        device_code: deviceCode,
+                        serial_code: serialCode,
+                        is_online: true,
+                        last_seen: new Date().toISOString(),
+                        telemetry: payload.type === 'TELEMETRY' ? payload : undefined,
+                    });
+                    if (payload.type === 'TELEMETRY') {
+                        const { suhu, kelembaban, media, level_air, ec, ph, tds, status } = payload;
+                        const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
+                        const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
+                        const nowTime = Date.now();
+                        const lastInsert = lastDbTelemetryInsert.get(deviceCode) || 0;
+                        if (nowTime - lastInsert >= 10000) {
+                            lastDbTelemetryInsert.set(deviceCode, nowTime);
+                            try {
+                                await pool.query('INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+                                    deviceSocket.telemetryDeviceCode || deviceCode,
+                                    suhu != null ? Number(suhu) : null,
+                                    kelembaban != null ? Number(kelembaban) : null,
+                                    media != null ? Number(media) : null,
+                                    level_air != null ? Number(level_air) : null,
+                                    finalEc != null ? Number(finalEc.toFixed(2)) : null,
+                                    ph != null ? Number(ph) : null,
+                                    finalTds != null ? Number(finalTds.toFixed(0)) : null,
+                                    status || 'Normal',
+                                ]);
+                            }
+                            catch (dbErr) {
+                                console.error('[WebSocket] Error saving sensor telemetry:', dbErr.message);
+                            }
+                        }
+                        broadcastToDashboards({
+                            type: 'SENSOR_TELEMETRY',
+                            device_code: deviceCode,
+                            serial_code: serialCode,
+                            telemetry: {
+                                suhu,
+                                kelembaban,
+                                media,
+                                level_air,
+                                ec: finalEc != null ? Number(finalEc.toFixed(2)) : null,
+                                ph: ph != null ? Number(ph) : null,
+                                tds: finalTds != null ? Number(finalTds.toFixed(0)) : null,
+                                status: status || 'Normal',
+                                created_at: new Date().toISOString(),
+                            },
+                        });
+                    }
+                    if (payload.type === 'HEARTBEAT') {
+                        ws.send(JSON.stringify({ type: 'HEARTBEAT_ACK', time: new Date().toISOString() }));
+                    }
+                    else if (payload.type === 'COMMAND_COMPLETE') {
+                        const cmdId = payload.command_id;
+                        if (cmdId) {
+                            await pool.query("UPDATE device_commands SET status = 'completed', completed_at = NOW(), message = ? WHERE id = ?", [payload.message || 'Executed via WebSocket', cmdId]);
+                            broadcastToDashboards({
+                                type: 'COMMAND_STATUS',
+                                command_id: cmdId,
+                                status: 'completed',
+                                message: payload.message,
+                                completed_at: new Date().toISOString(),
+                            });
+                        }
+                    }
+                }
+                catch (err) {
+                    console.error('[WebSocket] Error processing message:', err.message);
+                }
+            });
+            ws.on('close', () => {
+                console.log(`🔌 [WebSocket] Device disconnected: ${deviceCode}`);
+                activeDevices.delete(deviceCode);
+                if (serialCode) {
+                    activeDevices.delete(`serial_${serialCode}`);
+                }
+                // Broadcast to Dashboards that device is OFFLINE
+                broadcastToDashboards({
+                    type: 'DEVICE_STATUS',
+                    device_code: deviceCode,
+                    serial_code: serialCode,
+                    is_online: false,
+                    last_seen: new Date().toISOString(),
+                });
+            });
+            ws.on('error', (err) => {
+                console.error(`❌ [WebSocket] Socket error on ${deviceCode}:`, err.message);
+            });
+        }
+        catch (err) {
+            console.error('[WebSocket] Connection error:', err.message);
+        }
+    });
+    console.log('🚀 [WebSocket] Server listening on ws://localhost:3001 (Paths: /ws/device & /ws/dashboard)');
+}
+// Helper to find active device socket matching device_code OR serial_code
+export function findDeviceSocket(deviceCode, serialCode) {
+    const c1 = deviceCode ? deviceCode.trim().toLowerCase() : '';
+    const c2 = serialCode ? serialCode.trim().toLowerCase() : '';
+    if (deviceCode && activeDevices.has(deviceCode.trim())) {
+        const dev = activeDevices.get(deviceCode.trim());
+        if (dev.ws.readyState === WebSocket.OPEN)
+            return dev;
+    }
+    if (serialCode && activeDevices.has(`serial_${serialCode.trim()}`)) {
+        const dev = activeDevices.get(`serial_${serialCode.trim()}`);
+        if (dev.ws.readyState === WebSocket.OPEN)
+            return dev;
+    }
+    for (const dev of activeDevices.values()) {
+        if (dev.ws.readyState !== WebSocket.OPEN)
+            continue;
+        const dCode = dev.deviceCode ? dev.deviceCode.toLowerCase() : '';
+        const sCode = dev.serialCode ? dev.serialCode.toLowerCase() : '';
+        if (c1 && (dCode === c1 || sCode === c1))
+            return dev;
+        if (c2 && (dCode === c2 || sCode === c2))
+            return dev;
+    }
+    return null;
+}
+// Instant push for LED confirmation blink (1-8 times)
+export function sendBlinkToDevice(deviceCode, serialCode, count = 2, gpio = 4) {
+    const target = findDeviceSocket(deviceCode, serialCode);
+    if (target && target.ws.readyState === WebSocket.OPEN) {
+        target.ws.send(JSON.stringify({
+            type: 'BLINK',
+            count,
+            gpio,
+            timestamp: Date.now(),
+        }));
+        console.log(`⚡ [WebSocket] Sent instant BLINK signal (${count}x) to ${target.deviceCode} (${target.serialCode || 'No Serial'})`);
+        return true;
+    }
+    console.log(`⚠️ [WebSocket] Device ${deviceCode || serialCode} not active on WebSocket.`);
+    return false;
+}
+// Instant push for approved permanent auth_code
+export function sendAuthApprovedToDevice(deviceCode, serialCode, authCode = '') {
+    const target = findDeviceSocket(deviceCode, serialCode);
+    if (target && target.ws.readyState === WebSocket.OPEN) {
+        target.ws.send(JSON.stringify({
+            type: 'AUTH_APPROVED',
+            auth_code: authCode,
+            timestamp: Date.now(),
+        }));
+        console.log(`🔑 [WebSocket] Sent instant AUTH_APPROVED (${authCode}) to ${target.deviceCode}`);
+        return true;
+    }
+    return false;
+}
+// Instant push for valve control commands
+export function sendValveCommandToDevice(deviceCode, serialCode, commandId = 0, gpio = 25, command = 'OPEN', durationSeconds = 5) {
+    const target = findDeviceSocket(deviceCode, serialCode);
+    if (target && target.ws.readyState === WebSocket.OPEN) {
+        target.ws.send(JSON.stringify({
+            type: 'VALVE_CONTROL',
+            command_id: commandId,
+            gpio,
+            command,
+            duration: durationSeconds,
+            timestamp: Date.now(),
+        }));
+        console.log(`🚰 [WebSocket] Sent instant VALVE_CONTROL to ${target.deviceCode} (GPIO ${gpio}, ${durationSeconds}s)`);
+        return true;
+    }
+    console.log(`⚠️ [WebSocket] Failed to send VALVE_CONTROL to ${deviceCode || serialCode} - Socket not open`);
+    return false;
+}
+// Instant push for LED control commands on GPIO 4 (ON / OFF / BLINK)
+export function sendLedControlToDevice(deviceCode, serialCode, state = 'ON', gpio = 4, durationSeconds = 0) {
+    const target = findDeviceSocket(deviceCode, serialCode);
+    if (target && target.ws.readyState === WebSocket.OPEN) {
+        target.ws.send(JSON.stringify({
+            type: 'LED_CONTROL',
+            state,
+            gpio,
+            duration: durationSeconds,
+            timestamp: Date.now(),
+        }));
+        console.log(`💡 [WebSocket] Sent instant LED_CONTROL (${state}, GPIO ${gpio}) to ${target.deviceCode} (${target.serialCode || 'No Serial'})`);
+        return true;
+    }
+    console.log(`⚠️ [WebSocket] Failed to send LED_CONTROL to ${deviceCode || serialCode} - Socket not open`);
+    return false;
+}
+export function isDeviceSocketConnected(deviceCode, serialCode) {
+    return findDeviceSocket(deviceCode, serialCode) !== null;
+}
+export function getConnectedDeviceCode(deviceCode, serialCode) {
+    return findDeviceSocket(deviceCode, serialCode)?.deviceCode || null;
+}
+export function getOnlyConnectedDeviceCode() {
+    const connectedDevices = new Set();
+    for (const device of activeDevices.values()) {
+        if (device.ws.readyState === WebSocket.OPEN)
+            connectedDevices.add(device);
+    }
+    if (connectedDevices.size !== 1)
+        return null;
+    return Array.from(connectedDevices)[0]?.deviceCode || null;
+}

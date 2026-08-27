@@ -681,9 +681,13 @@ app.put('/users/:id/devices/:deviceId', async (c) => {
 
     if (device_code) {
       const trimmedCode = device_code.trim().toUpperCase();
-      const [dup]: any = await pool.query('SELECT id FROM devices WHERE device_code = ? AND id != ?', [trimmedCode, deviceId]);
+      const [dup]: any = await pool.query('SELECT id, user_id FROM devices WHERE (device_code = ? OR serial_code = ?) AND id != ?', [trimmedCode, trimmedCode, deviceId]);
       if (dup.length > 0) {
-        return c.json({ success: false, message: 'Kode perangkat sudah digunakan.' }, 400);
+        if (!dup[0].user_id || dup[0].user_id == userId) {
+          await pool.query('DELETE FROM devices WHERE id = ?', [dup[0].id]);
+        } else {
+          return c.json({ success: false, message: 'Kode perangkat sudah digunakan oleh akun lain.' }, 400);
+        }
       }
     }
 

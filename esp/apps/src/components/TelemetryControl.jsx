@@ -49,13 +49,25 @@ export function TelemetryControl({
   };
 
   const phVal = sensors.ph != null && !isNaN(Number(sensors.ph)) ? Number(sensors.ph) : null;
+  const tdsVal = sensors.tds != null && !isNaN(Number(sensors.tds)) ? Number(sensors.tds) : (sensors.ec != null ? Number(sensors.ec) * 500.0 : null);
+  const ecVal = sensors.ec != null && !isNaN(Number(sensors.ec)) ? Number(sensors.ec) : (tdsVal != null ? tdsVal / 500.0 : null);
+
   const getPhStatus = (ph) => {
     if (ph == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
     if (ph < 5.5) return { label: 'Asam (Rendah)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
     if (ph <= 6.8) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
     return { label: 'Basa (Tinggi)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
   };
+
+  const getTdsStatus = (tds) => {
+    if (tds == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
+    if (tds < 700) return { label: 'Rendah (Encer)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
+    if (tds <= 1400) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
+    return { label: 'Pekat (Tinggi)', color: 'bg-red-50 text-red-700 border-red-300', dot: 'bg-red-500' };
+  };
+
   const phStatus = getPhStatus(phVal);
+  const tdsStatus = getTdsStatus(tdsVal);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -67,8 +79,8 @@ export function TelemetryControl({
               <Activity className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Live Sensor pH Air (Real)</h3>
-              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Streaming data analog aktual dari GPIO 34 via BLE</p>
+              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Live Sensor Telemetri Realtime</h3>
+              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Streaming data aktual sensor pH (GPIO 34) & TDS (GPIO 32) via BLE</p>
             </div>
           </div>
 
@@ -81,32 +93,71 @@ export function TelemetryControl({
           </button>
         </div>
 
-        {/* Real pH Sensor Card */}
-        <div className="bg-[#F9FAF6] border-2 border-[#C8D9B0] rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <TestTube className="w-5 h-5 text-purple-600" />
-              <span className="text-xs font-bold text-[#2D3B2D]">Sensor pH-4502C (Pin Po)</span>
+        {/* 2 Real Sensor Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+          {/* Card 1: Sensor pH */}
+          <div className="bg-[#F9FAF6] border-2 border-[#C8D9B0] rounded-xl p-4 sm:p-5 flex flex-col justify-between gap-3 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TestTube className="w-5 h-5 text-purple-600" />
+                <span className="text-xs font-bold text-[#2D3B2D]">Sensor pH-4502C</span>
+              </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
                 GPIO 34
               </span>
             </div>
-            <div className="flex items-baseline gap-2 pt-1">
+
+            <div className="flex items-baseline gap-2">
               <span className="text-3xl sm:text-4xl font-extrabold font-mono text-[#2D3B2D]">
                 {phVal !== null ? phVal.toFixed(2) : '—'}
               </span>
               <span className="text-sm font-bold text-[#8A9B7A]">pH</span>
             </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#E8EDE0]">
+              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${phStatus.color}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${phStatus.dot}`} />
+                <span>{phStatus.label}</span>
+              </span>
+              <span className="text-[10px] text-[#8A9B7A] font-mono">
+                Target: 5.50 - 6.50
+              </span>
+            </div>
           </div>
 
-          <div className="flex flex-col sm:items-end gap-2">
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${phStatus.color}`}>
-              <span className={`w-2 h-2 rounded-full ${phStatus.dot}`} />
-              <span>{phStatus.label}</span>
-            </span>
-            <span className="text-[11px] text-[#8A9B7A] font-mono">
-              Target Fertigasi: 5.50 - 6.50 pH
-            </span>
+          {/* Card 2: Sensor TDS Nutrisi */}
+          <div className="bg-[#F9FAF6] border-2 border-[#C8D9B0] rounded-xl p-4 sm:p-5 flex flex-col justify-between gap-3 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-amber-500" />
+                <span className="text-xs font-bold text-[#2D3B2D]">Sensor TDS Meter V1.0</span>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
+                GPIO 32
+              </span>
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl sm:text-4xl font-extrabold font-mono text-[#2D3B2D]">
+                {tdsVal !== null ? Math.round(tdsVal) : '—'}
+              </span>
+              <span className="text-sm font-bold text-[#8A9B7A]">PPM</span>
+              {ecVal !== null && (
+                <span className="text-xs font-mono font-bold text-[#3A6B2A] ml-2">
+                  (~{ecVal.toFixed(2)} mS/cm)
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#E8EDE0]">
+              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${tdsStatus.color}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${tdsStatus.dot}`} />
+                <span>{tdsStatus.label}</span>
+              </span>
+              <span className="text-[10px] text-[#8A9B7A] font-mono">
+                Target: 800 - 1400 PPM
+              </span>
+            </div>
           </div>
         </div>
       </div>

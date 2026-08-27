@@ -9,7 +9,12 @@ import pino from 'pino';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pool } from '../db.js';
-import { sendValveCommandToDevice } from './wsServer.js';
+import {
+  getConnectedDeviceCode,
+  getOnlyConnectedDeviceCode,
+  isDeviceSocketConnected,
+  sendValveCommandToDevice,
+} from './wsServer.js';
 
 let sock: WASocket | null = null;
 let qrCodeData: string | null = null;
@@ -19,6 +24,42 @@ let connectedUser: { id?: string; name?: string; phone?: string } | null = null;
 const sessionDir = path.resolve(process.cwd(), 'session');
 
 const logger = pino({ level: 'silent' });
+
+const formatWibDateTime = (value: unknown): string => {
+  if (!value) return 'Belum pernah terhubung';
+  const date = new Date(value as string | number | Date);
+  if (Number.isNaN(date.getTime())) return 'Waktu tidak tersedia';
+
+  return `${new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)} WIB`;
+};
+
+const formatSensorValue = (value: unknown, decimals = 1): string => {
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+  return Number(value).toFixed(decimals);
+};
+
+const hasSensorValue = (value: unknown): boolean =>
+  value != null && value !== '' && Number.isFinite(Number(value));
+
+const getStatusIndicator = (status: unknown): string => {
+  const label = String(status || 'Tidak diketahui');
+  const normalized = label.toLowerCase();
+  const icon = ['normal', 'optimal', 'baik', 'aman', 'online'].some((value) => normalized.includes(value))
+    ? '🟢'
+    : ['warning', 'peringatan', 'rendah', 'tinggi'].some((value) => normalized.includes(value))
+      ? '🟡'
+      : '🔴';
+  return `${icon} ${label}`;
+};
 
 export function normalizePhoneAndJid(rawInput: string): { chatJid: string; cleanPhone: string } {
   let phone = rawInput.split('@')[0].replace(/[^0-9]/g, '');
@@ -273,10 +314,9 @@ Anda sekarang memiliki wewenang penuh untuk memonitor & mengontrol perangkat ESP
             cmd === '1' || cmd === 'status' || cmd === 'status sistem' || cmd === '!status' ||
             cmd === '2' || cmd === 'sensor' || cmd === 'kondisi' || cmd === 'kondisi sensor' || cmd === 'greenhouse' || cmd === '!sensor' ||
             cmd === '3' || cmd === 'jadwal' || cmd === 'jadwal hari ini' || cmd === '!jadwal' ||
-            cmd === '4' || cmd === 'setting' || cmd === 'setting jadwal' ||
-            cmd === '5' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman' ||
-            cmd === '6' || cmd === 'valve' || cmd === 'status valve' ||
-            cmd === '7' || cmd === 'test' || cmd === 'test valve' ||
+            cmd === '4' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman' ||
+            cmd === '5' || cmd === 'valve' || cmd === 'status valve' ||
+            cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve' ||
             cmd.startsWith('on ') || cmd.startsWith('off ')
           )) {
             replyText = `⚠️ *Perangkat ESP32 Belum Terdaftar* (User: ${userName} | ${userUid})
@@ -295,46 +335,100 @@ Setelah perangkat ESP32 ditambahkan dan diverifikasi, seluruh menu pemantauan & 
               ORDER BY (p.user_id = ?) DESC LIMIT 1
             `, [userId, userId]);
 
-            const [devices]: any = await pool.query(
-              'SELECT * FROM devices WHERE (user_id = ? OR user_id IS NULL) ORDER BY (user_id = ?) DESC LIMIT 1',
-              [userId, userId]
-            );
-            const [valves]: any = await pool.query('SELECT COUNT(*) as count FROM valves WHERE is_active = 1');
-
             const p = plantings[0] || {};
-            const d = devices[0] || {};
+            const d = primaryDevice || {};
+            const [valves]: any = await pool.query(
+              'SELECT COUNT(*) as count FROM valves WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)',
+              [d.id]
+            );
+            const connectedDeviceCode = getConnectedDeviceCode(d.device_code, d.serial_code)
+              || (userDevices.length === 1 ? getOnlyConnectedDeviceCode() : null);
+            const [telemetries]: any = await pool.query(
+              `SELECT device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status, created_at
+               FROM sensor_telemetry
+               WHERE device_code IN (?, ?, ?)
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1`,
+              [d.device_code || '', d.serial_code || d.device_code || '', connectedDeviceCode || d.device_code || '']
+            );
+            const sensor = telemetries[0] || null;
+            const isOnline = isDeviceSocketConnected(d.device_code, d.serial_code);
+            const latestActivity = d.last_seen || sensor?.created_at;
+            const tdsValue = sensor?.tds != null
+              ? Number(sensor.tds)
+              : sensor?.ec != null
+                ? Number(sensor.ec) * 500
+                : null;
             const pDate = p.planting_date ? new Date(p.planting_date) : new Date();
             const today = new Date();
             pDate.setHours(0, 0, 0, 0);
             today.setHours(0, 0, 0, 0);
             const hst = Math.max(0, Math.floor((today.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24)));
-            const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
-            replyText = `🌱 *STATUS SISTEM* (User: ${userName} | ${userUid})
+            const telemetrySection = sensor
+              ? `
+📡 *TELEMETRI TERBARU*
+pH         : ${formatSensorValue(sensor.ph, 2)}
+TDS        : ${tdsValue != null ? `${Math.round(tdsValue)} PPM` : '—'}
+EC         : ${formatSensorValue(sensor.ec, 2)} mS/cm
+Suhu       : ${formatSensorValue(sensor.suhu, 1)} °C
+Kelembaban : ${formatSensorValue(sensor.kelembaban, 1)} %
+Media      : ${formatSensorValue(sensor.media, 1)} %
+Level Air  : ${formatSensorValue(sensor.level_air, 1)} %
+Kondisi    : ${getStatusIndicator(sensor.status)}
+Waktu Data : ${formatWibDateTime(sensor.created_at)}`
+              : `
+📡 *TELEMETRI TERBARU*
+Belum ada data sensor dari perangkat ini.`;
+
+            replyText = `🌱 *STATUS SISTEM TERBARU* (User: ${userName} | ${userUid})
 Tanaman  : ${p.name || 'Melon Greenhouse A'}
 HST      : ${hst}
 Fase     : Vegetatif
 Profil   : ${p.profile_name || 'Melon Standar'}
-ESP32    : 🟢 ONLINE (${d.device_code || 'ESP-FERTIGASI-01'})
+ESP32    : ${isOnline ? '🟢 ONLINE' : '🔴 OFFLINE'} (${d.device_code})
 Mode     : ${d.mode || 'AUTO'}
-Last Seen: ${timeStr}
-Jumlah Valve : ${valves[0]?.count || 2}`;
+Last Seen: ${formatWibDateTime(latestActivity)}
+Jumlah Valve : ${valves[0]?.count || 0}${telemetrySection}`;
           }
           // Menu 2: SENSOR / KONDISI GREENHOUSE
           else if (cmd === '2' || cmd === 'sensor' || cmd === 'kondisi' || cmd === 'kondisi sensor' || cmd === 'greenhouse' || cmd === '!sensor') {
-            const [rows]: any = await pool.query('SELECT * FROM sensor_telemetry ORDER BY created_at DESC LIMIT 1');
-            const sensor = rows[0] || { suhu: 29.4, kelembaban: 76, media: 63, level_air: 72, ec: 1.8, ph: 6.2, status: 'Normal' };
-            const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+            const connectedDeviceCode = getConnectedDeviceCode(primaryDevice.device_code, primaryDevice.serial_code)
+              || (userDevices.length === 1 ? getOnlyConnectedDeviceCode() : null);
+            const [rows]: any = await pool.query(
+              `SELECT suhu, kelembaban, media, level_air, ec, ph, tds, status, created_at
+               FROM sensor_telemetry
+               WHERE device_code IN (?, ?, ?)
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1`,
+              [
+                primaryDevice.device_code || '',
+                primaryDevice.serial_code || primaryDevice.device_code || '',
+                connectedDeviceCode || primaryDevice.device_code || '',
+              ]
+            );
+            const sensor = rows[0] || null;
 
-            replyText = `🌡️ *KONDISI GREENHOUSE* (${userUid})
-Suhu       : ${sensor.suhu} °C
-Kelembaban : ${sensor.kelembaban} %
-Media      : ${sensor.media} %
-Level Air  : ${sensor.level_air} %
-EC         : ${sensor.ec} mS/cm
-pH         : ${sensor.ph}
-Status     : 🟢 ${sensor.status || 'Normal'}
-Update     : ${timeStr}`;
+            if (!sensor) {
+              replyText = `🌡️ *KONDISI GREENHOUSE* (${userUid})\nBelum ada data sensor dari perangkat ini.`;
+            } else {
+              const sensorLines: string[] = [];
+              if (hasSensorValue(sensor.suhu)) sensorLines.push(`Suhu       : ${formatSensorValue(sensor.suhu, 1)} °C`);
+              if (hasSensorValue(sensor.kelembaban)) sensorLines.push(`Kelembaban : ${formatSensorValue(sensor.kelembaban, 1)} %`);
+              if (hasSensorValue(sensor.media)) sensorLines.push(`Media      : ${formatSensorValue(sensor.media, 1)} %`);
+              if (hasSensorValue(sensor.level_air)) sensorLines.push(`Level Air  : ${formatSensorValue(sensor.level_air, 1)} %`);
+              if (hasSensorValue(sensor.ec)) sensorLines.push(`EC         : ${formatSensorValue(sensor.ec, 2)} mS/cm`);
+              if (hasSensorValue(sensor.ph)) sensorLines.push(`pH         : ${formatSensorValue(sensor.ph, 2)}`);
+              if (hasSensorValue(sensor.tds)) sensorLines.push(`TDS        : ${Math.round(Number(sensor.tds))} PPM`);
+
+              if (sensorLines.length === 0) {
+                sensorLines.push('Belum ada nilai sensor yang tersedia.');
+              }
+              if (sensor.status) sensorLines.push(`Status     : ${getStatusIndicator(sensor.status)}`);
+              sensorLines.push(`Update     : ${formatWibDateTime(sensor.created_at)}`);
+
+              replyText = `🌡️ *KONDISI GREENHOUSE* (${userUid})\n${sensorLines.join('\n')}`;
+            }
           }
           // Menu 3: JADWAL / JADWAL HARI INI
           else if (cmd === '3' || cmd === 'jadwal' || cmd === 'jadwal hari ini' || cmd === '!jadwal') {
@@ -368,22 +462,8 @@ Update     : ${timeStr}`;
               });
             }
           }
-          // Menu 4: SETTING JADWAL
-          else if (cmd === '4' || cmd === 'setting' || cmd === 'setting jadwal') {
-            replyText = `📋 *SETTING JADWAL* (${userUid})
-Pilih Profil Fertigasi:
-1. Melon Standar
-2. Melon Eksperimen
-
-Pilih Fase Pertumbuhan:
-1. Masa Awal
-2. Vegetatif
-3. Pembungaan
-
-Ketik nomor profil atau nama fase yang diinginkan.`;
-          }
-          // Menu 5: DATA PENANAMAN
-          else if (cmd === '5' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman') {
+          // Menu 4: DATA PENANAMAN
+          else if (cmd === '4' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman') {
             const [plantings]: any = await pool.query(`
               SELECT p.*, fp.name as profile_name
               FROM plantings p
@@ -406,8 +486,8 @@ Fase          : Vegetatif
 Profil        : ${p.profile_name || 'Melon Standar'}
 Status        : Aktif`;
           }
-          // Menu 6: STATUS VALVE
-          else if (cmd === '6' || cmd === 'valve' || cmd === 'status valve') {
+          // Menu 5: STATUS VALVE
+          else if (cmd === '5' || cmd === 'valve' || cmd === 'status valve') {
             const [valves]: any = await pool.query('SELECT * FROM valves WHERE is_active = 1');
             replyText = `🚰 *STATUS VALVE* (${userUid})\n`;
             if (valves.length === 0) {
@@ -420,9 +500,11 @@ Status        : Aktif`;
             }
             replyText += `Mode Sistem     : AUTO`;
           }
-          // Menu 7: TEST VALVE
-          else if (cmd === '7' || cmd === 'test' || cmd === 'test valve') {
-            replyText = `🧪 *TEST VALVE* (${userUid})
+          // Menu 6: MODE DEMO & MANUAL CONTROL
+          else if (cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve') {
+            replyText = `🧪 *MODE DEMO & MANUAL CONTROL* (${userUid})
+Pengujian manual buka & tutup solenoid valve secara realtime ke mikrokontroler ESP32.
+
 Pilih Valve:
 1. Valve 1 (Zona A)
 2. Valve 2 (Zona B)
@@ -470,7 +552,7 @@ Ketik nomor valve & durasi (contoh: *ON 1 10* untuk Buka Valve 1 selama 10 detik
               replyText = `⚠️ Valve tidak ditemukan. Ketik *TEST VALVE* untuk petunjuk.`;
             }
           }
-          // Menu 8 / MENU / BANTUAN / HELP / Default
+          // Menu 7 / MENU / BANTUAN / HELP / Default
           else {
             const devInfo = hasDevice 
               ? `📱 *Perangkat ESP32:* ${primaryDevice?.device_code || 'ESP-FERTIGASI-01'} (${primaryDevice?.status === 'verified' ? '🟢 Terverifikasi' : '🟡 Belum Verifikasi'})`
@@ -483,13 +565,12 @@ Pilih menu:
 1. Status Sistem
 2. Kondisi Sensor
 3. Jadwal Hari Ini
-4. Setting Jadwal
-5. Data Penanaman
-6. Status Valve
-7. Test Valve
-8. Bantuan
+4. Data Penanaman
+5. Status Valve
+6. Mode Demo & Manual Control
+7. Bantuan
 
-Ketik nomor menu (1-8) atau kata kunci (misal: 1 atau STATUS).`;
+Ketik nomor menu (1-7) atau kata kunci (misal: 1 atau STATUS).`;
           }
 
           if (replyText && sock) {
