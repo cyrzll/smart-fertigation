@@ -32,12 +32,9 @@ const PH_SAFE_MIN = 5.5;
 const PH_SAFE_MAX = 6.5;
 const TDS_SAFE_MIN = 800;
 const TDS_SAFE_MAX = 1400;
-const SENSOR_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 const sensorAlertStates = new Map<string, {
   ph: number | null;
   tds: number | null;
-  lastPhAlertAt: number;
-  lastTdsAlertAt: number;
 }>();
 
 const formatWibDateTime = (value: unknown): string => {
@@ -79,32 +76,39 @@ const getStatusIndicator = (status: unknown): string => {
 const formatDelta = (value: number, decimals: number): string =>
   `${value >= 0 ? '↑' : '↓'}${Math.abs(value).toFixed(decimals)}`;
 
+const getSensorRange = (value: number | null, min: number, max: number): 'low' | 'normal' | 'high' | null => {
+  if (value == null) return null;
+  if (value < min) return 'low';
+  if (value > max) return 'high';
+  return 'normal';
+};
+
 async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
   const stateKey = event.registeredDeviceCode || event.serialCode || event.deviceCode;
-  const previous = sensorAlertStates.get(stateKey) || {
-    ph: null,
-    tds: null,
-    lastPhAlertAt: 0,
-    lastTdsAlertAt: 0,
-  };
+  const existingState = sensorAlertStates.get(stateKey);
+  const previous = existingState || { ph: null, tds: null };
 
   const phDelta = event.ph != null && previous.ph != null ? event.ph - previous.ph : null;
   const tdsDelta = event.tds != null && previous.tds != null ? event.tds - previous.tds : null;
   const phSpiked = phDelta != null && Math.abs(phDelta) >= PH_SPIKE_THRESHOLD;
   const tdsSpiked = tdsDelta != null && Math.abs(tdsDelta) >= TDS_SPIKE_THRESHOLD;
-  const phOutOfRange = event.ph != null && (event.ph < PH_SAFE_MIN || event.ph > PH_SAFE_MAX);
-  const tdsOutOfRange = event.tds != null && (event.tds < TDS_SAFE_MIN || event.tds > TDS_SAFE_MAX);
-  const now = Date.now();
-  const shouldAlertPh = (phSpiked || phOutOfRange)
-    && now - previous.lastPhAlertAt >= SENSOR_ALERT_COOLDOWN_MS;
-  const shouldAlertTds = (tdsSpiked || tdsOutOfRange)
-    && now - previous.lastTdsAlertAt >= SENSOR_ALERT_COOLDOWN_MS;
+  const phRange = getSensorRange(event.ph, PH_SAFE_MIN, PH_SAFE_MAX);
+  const tdsRange = getSensorRange(event.tds, TDS_SAFE_MIN, TDS_SAFE_MAX);
+  const previousPhRange = getSensorRange(previous.ph, PH_SAFE_MIN, PH_SAFE_MAX);
+  const previousTdsRange = getSensorRange(previous.tds, TDS_SAFE_MIN, TDS_SAFE_MAX);
+  const shouldAlertPh = event.ph != null && (
+    phSpiked
+    || (existingState ? phRange !== previousPhRange : phRange !== 'normal')
+  );
+  const shouldAlertTds = event.tds != null && (
+    tdsSpiked
+    || (existingState ? tdsRange !== previousTdsRange : tdsRange !== 'normal')
+  );
 
   sensorAlertStates.set(stateKey, {
-    ph: event.ph ?? previous.ph,
-    tds: event.tds ?? previous.tds,
-    lastPhAlertAt: previous.lastPhAlertAt,
-    lastTdsAlertAt: previous.lastTdsAlertAt,
+    // Pertahankan nilai referensi sampai perubahan mencapai ambang signifikan.
+    ph: shouldAlertPh || !existingState ? (event.ph ?? previous.ph) : previous.ph,
+    tds: shouldAlertTds || !existingState ? (event.tds ?? previous.tds) : previous.tds,
   });
 
   if (!shouldAlertPh && !shouldAlertTds) return;
@@ -124,19 +128,12 @@ async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
 
   if (recipients.length === 0) return;
 
-  sensorAlertStates.set(stateKey, {
-    ph: event.ph ?? previous.ph,
-    tds: event.tds ?? previous.tds,
-    lastPhAlertAt: shouldAlertPh ? now : previous.lastPhAlertAt,
-    lastTdsAlertAt: shouldAlertTds ? now : previous.lastTdsAlertAt,
-  });
-
   const changes: string[] = [];
   if (shouldAlertPh && event.ph != null) {
     if (phSpiked && phDelta != null) {
       changes.push(`pH  : ${previous.ph?.toFixed(2)} → ${event.ph.toFixed(2)} (${formatDelta(phDelta, 2)})`);
     } else {
-      const condition = event.ph < PH_SAFE_MIN ? 'terlalu rendah' : 'terlalu tinggi';
+      const condition = phRange === 'low' ? 'terlalu rendah' : phRange === 'high' ? 'terlalu tinggi' : 'kembali ideal';
       changes.push(`pH  : ${event.ph.toFixed(2)} (${condition}; target ${PH_SAFE_MIN.toFixed(1)}–${PH_SAFE_MAX.toFixed(1)})`);
     }
   }
@@ -144,7 +141,7 @@ async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
     if (tdsSpiked && tdsDelta != null) {
       changes.push(`TDS : ${Math.round(previous.tds as number)} → ${Math.round(event.tds)} PPM (${formatDelta(tdsDelta, 0)})`);
     } else {
-      const condition = event.tds < TDS_SAFE_MIN ? 'terlalu rendah' : 'terlalu tinggi';
+      const condition = tdsRange === 'low' ? 'terlalu rendah' : tdsRange === 'high' ? 'terlalu tinggi' : 'kembali ideal';
       changes.push(`TDS : ${Math.round(event.tds)} PPM (${condition}; target ${TDS_SAFE_MIN}–${TDS_SAFE_MAX} PPM)`);
     }
   }
