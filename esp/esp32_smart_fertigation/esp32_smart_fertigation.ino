@@ -72,6 +72,12 @@ bool is_authenticated = false;
 #define ONBOARD_LED 2       // Onboard Blue LED - GPIO 2
 #define CONFIRM_LED_PIN 4   // External LED Konfirmasi - GPIO 4
 
+// Modul lampu indikator common-ground (GND bersama, warna aktif-HIGH)
+// Sambungan: GND -> GND ESP32, R -> GPIO 16, Y -> GPIO 17, G -> GPIO 18
+#define STATUS_RED_PIN       16
+#define STATUS_YELLOW_PIN    17
+#define STATUS_GREEN_PIN     18
+
 // Pin Konfigurasi Sensor Fisik:
 //   - SENSOR_PH_PIN  : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
 //   - SENSOR_TDS_PIN : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
@@ -104,6 +110,30 @@ BLECharacteristic *pBleTxChar = NULL;
 BLECharacteristic *pBleRxChar = NULL;
 bool bleDeviceConnected = false;
 bool oldBleDeviceConnected = false;
+bool wifiConnecting = false;
+
+// Perbarui indikator tanpa delay:
+// hijau tetap = Wi-Fi tersambung, hijau berkedip = mencoba Wi-Fi,
+// kuning = client BLE tersambung, merah = ESP hidup/standby.
+void updateStatusIndicator() {
+  bool redOn = false;
+  bool yellowOn = false;
+  bool greenOn = false;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    greenOn = true;
+  } else if (wifiConnecting) {
+    greenOn = ((millis() / 400) % 2) == 0;
+  } else if (bleDeviceConnected) {
+    yellowOn = true;
+  } else {
+    redOn = true;
+  }
+
+  digitalWrite(STATUS_RED_PIN, redOn ? LED_ON_STATE : LED_OFF_STATE);
+  digitalWrite(STATUS_YELLOW_PIN, yellowOn ? LED_ON_STATE : LED_OFF_STATE);
+  digitalWrite(STATUS_GREEN_PIN, greenOn ? LED_ON_STATE : LED_OFF_STATE);
+}
 
 unsigned long lastHeartbeat = 0;
 unsigned long lastTelemetry = 0;
@@ -508,6 +538,9 @@ void performBleWifiScan() {
 void connectWifiViaBle(String ssid, String pass) {
   Serial.printf("[BLE Wi-Fi] Mencoba menyambungkan ke SSID: %s\n", ssid.c_str());
 
+  wifiConnecting = true;
+  updateStatusIndicator();
+
   // Notify Web client that connection is in progress
   StaticJsonDocument<256> progressDoc;
   progressDoc["type"] = "WIFI_CONNECTING";
@@ -524,10 +557,13 @@ void connectWifiViaBle(String ssid, String pass) {
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 25) {
     delay(500);
+    updateStatusIndicator();
     Serial.print(".");
     attempts++;
   }
   Serial.println();
+  wifiConnecting = false;
+  updateStatusIndicator();
 
   StaticJsonDocument<384> resDoc;
   resDoc["type"] = "WIFI_CONNECT_RESULT";
@@ -603,11 +639,13 @@ void resetWifiCredentialsViaBle() {
 class MyBleServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       bleDeviceConnected = true;
+      updateStatusIndicator();
       Serial.println("\n[BLE] >>> Client Web Bluetooth TERHUBUNG! <<<");
     };
 
     void onDisconnect(BLEServer* pServer) {
       bleDeviceConnected = false;
+      updateStatusIndicator();
       Serial.println("\n[BLE] >>> Client Web Bluetooth TERPUTUS! <<<");
     }
 };
@@ -994,6 +1032,9 @@ void setup() {
   pinMode(VALVE2_PIN, OUTPUT);
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);
+  pinMode(STATUS_RED_PIN, OUTPUT);
+  pinMode(STATUS_YELLOW_PIN, OUTPUT);
+  pinMode(STATUS_GREEN_PIN, OUTPUT);
   pinMode(SENSOR_PH_PIN, INPUT);
   pinMode(SENSOR_TDS_PIN, INPUT);
 
@@ -1005,6 +1046,9 @@ void setup() {
   digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE);
   digitalWrite(ONBOARD_LED, LED_OFF_STATE);
   digitalWrite(CONFIRM_LED_PIN, LED_OFF_STATE);
+  digitalWrite(STATUS_RED_PIN, LED_ON_STATE);
+  digitalWrite(STATUS_YELLOW_PIN, LED_OFF_STATE);
+  digitalWrite(STATUS_GREEN_PIN, LED_OFF_STATE);
 
   // 1. Baca konfigurasi dari flash memory (NVS)
   preferences.begin("fertigation", false);
@@ -1035,15 +1079,19 @@ void setup() {
 
   // 3. Hubungkan ke Wi-Fi (non-blocking jika sudah pernah terhubung atau gunakan WiFiManager)
   WiFi.mode(WIFI_STA);
+  wifiConnecting = true;
   WiFi.begin(); // Mencoba reconnect ke SSID tersimpan sebelumnya di flash
 
   Serial.println("[Wi-Fi] Menghubungkan ke Wi-Fi yang tersimpan di flash...");
   unsigned long startWifi = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startWifi < 6000) {
     delay(400);
+    updateStatusIndicator();
     Serial.print(".");
   }
   Serial.println();
+  wifiConnecting = false;
+  updateStatusIndicator();
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[Wi-Fi] Terhubung ke %s! IP ESP32: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
@@ -1061,6 +1109,9 @@ void setup() {
 // Main Loop
 // =================================================================================
 void loop() {
+  // Indikator selalu mengikuti status koneksi terkini.
+  updateStatusIndicator();
+
   // Jalankan loop WebSocket client jika Wi-Fi terhubung
   if (WiFi.status() == WL_CONNECTED) {
     webSocket.loop();
