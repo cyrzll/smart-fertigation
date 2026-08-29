@@ -266,7 +266,7 @@ export const DemoView = ({ apiUrl }) => {
                 {currentDeviceOnline ? (
                   <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                     <Wifi className="w-3.5 h-3.5" />
-                    <span>ONLINE (Live WS)</span>
+                    <span>ONLINE</span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
@@ -283,7 +283,7 @@ export const DemoView = ({ apiUrl }) => {
             </div>
 
             <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100">
-              <span className="text-xs text-slate-500 font-semibold">Heartbeat Terakhir</span>
+              <span className="text-xs text-slate-500 font-semibold">Terakhir Aktif</span>
               <p className="text-base font-bold text-slate-800 mt-1">
                 {formatWibFull(selectedDevice.last_seen)}
               </p>

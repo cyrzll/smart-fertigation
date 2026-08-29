@@ -178,7 +178,7 @@ export function WifiManager({
             <div className="bg-[#F9FAF6] rounded-xl p-2.5 sm:p-3 border border-[#D4DFC8]">
               <div className="flex items-center gap-1 text-[#8A9B7A] text-[10px] sm:text-[11px] mb-0.5">
                 <Radio className="w-3 h-3 text-[#7BAF5A]" />
-                <span>WebSocket</span>
+                <span>Server</span>
               </div>
               <div className="text-[11px] sm:text-xs font-bold text-[#2D3B2D] flex items-center gap-1.5">
                 <span
@@ -295,7 +295,7 @@ export function WifiManager({
               </div>
               <div>
                 <h4 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Hubungkan ke Wi-Fi</h4>
-                <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Kirim SSID & Password via BLE</p>
+                <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Masukkan nama dan kata sandi jaringan</p>
               </div>
             </div>
 

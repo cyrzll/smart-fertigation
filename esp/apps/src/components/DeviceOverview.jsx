@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   RefreshCw,
   Trash2,
-  Server,
   Globe,
 } from 'lucide-react';
 
@@ -118,14 +117,6 @@ export function DeviceOverview({
                 {status.serial_code || 'SN-UNKNOWN'}
               </span>
             </h2>
-            <div className="flex items-center gap-2 text-[11px] sm:text-xs text-[#8A9B7A] mt-0.5 truncate flex-wrap">
-              <span>Firmware: <span className="font-mono text-[#5A6B5A]">{status.firmware || 'v2.2.0'}</span></span>
-              <span>•</span>
-              <span className="flex items-center gap-1 font-mono text-[#5A6B5A]">
-                <Server className="w-3 h-3 text-[#7BAF5A]" />
-                API: {status.api_host || '192.168.1.4'}:{status.api_port || 3001}
-              </span>
-            </div>
           </div>
         </div>
 
@@ -136,7 +127,7 @@ export function DeviceOverview({
             className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-[#E8F2DF] border border-[#C8D9B0] text-[#3A6B2A] hover:bg-[#D8EAC9] transition active:scale-95 cursor-pointer shadow-2xs"
           >
             <Globe className="w-3.5 h-3.5 text-[#7BAF5A]" />
-            <span>Ganti URL API</span>
+            <span>Pengaturan Server</span>
           </button>
           <button
             onClick={onRefresh}
@@ -151,7 +142,7 @@ export function DeviceOverview({
             className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition active:scale-95 disabled:opacity-50 cursor-pointer shadow-2xs"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isRestarting ? 'animate-spin' : ''}`} />
-            <span>Reboot ESP</span>
+            <span>Mulai Ulang</span>
           </button>
         </div>
       </div>
@@ -221,21 +212,21 @@ export function DeviceOverview({
         {/* Card 3: Free Memory */}
         <div className="bg-white border border-[#D4DFC8] rounded-xl p-3 sm:p-4 flex flex-col justify-between shadow-2xs">
           <div className="flex items-center justify-between text-[#8A9B7A] mb-2 sm:mb-3">
-            <span className="text-[11px] sm:text-xs font-medium">Free SRAM</span>
+            <span className="text-[11px] sm:text-xs font-medium">Memori Tersedia</span>
             <HardDrive className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#7BAF5A]" />
           </div>
           <div>
             <div className="text-base sm:text-lg font-bold text-[#2D3B2D] font-mono">
               {formatMemory(status.free_heap)}
             </div>
-            <div className="text-[10px] sm:text-[11px] text-[#8A9B7A] mt-0.5">Sisa RAM</div>
+            <div className="text-[10px] sm:text-[11px] text-[#8A9B7A] mt-0.5">Kapasitas perangkat</div>
           </div>
         </div>
 
         {/* Card 4: Hardware Test LED */}
         <div className="bg-white border border-[#D4DFC8] rounded-xl p-3 sm:p-4 flex flex-col justify-between shadow-2xs col-span-2 sm:col-span-1">
           <div className="flex items-center justify-between text-[#8A9B7A] mb-2 sm:mb-3">
-            <span className="text-[11px] sm:text-xs font-medium">Test LED (GPIO 2/4)</span>
+            <span className="text-[11px] sm:text-xs font-medium">Tes Lampu</span>
             <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 mt-1">
@@ -256,7 +247,7 @@ export function DeviceOverview({
               className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg sm:rounded-xl bg-[#E8F2DF] border border-[#C8D9B0] text-[#3A6B2A] hover:bg-[#D8EAC9] text-[11px] sm:text-xs font-bold transition active:scale-95 disabled:opacity-50 cursor-pointer"
             >
               <Sparkles className={`w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#7BAF5A] ${isBlinking ? 'animate-bounce' : ''}`} />
-              <span>{isBlinking ? 'Kedip...' : 'Blink!'}</span>
+              <span>{isBlinking ? 'Menguji...' : 'Uji'}</span>
             </button>
           </div>
         </div>
@@ -271,8 +262,8 @@ export function DeviceOverview({
                 <Globe className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm sm:text-base font-bold text-[#2D3B2D]">Konfigurasi URL API Backend</h3>
-                <p className="text-xs text-[#8A9B7A]">Atur alamat Host/IP dan Port WebSocket server</p>
+                <h3 className="text-sm sm:text-base font-bold text-[#2D3B2D]">Pengaturan Server</h3>
+                <p className="text-xs text-[#8A9B7A]">Ubah alamat server perangkat bila diperlukan</p>
               </div>
             </div>
 
@@ -317,7 +308,7 @@ export function DeviceOverview({
 
               <div>
                 <label className="block text-xs font-semibold text-[#5A6B5A] mb-1.5">
-                  Port WebSocket Server
+                  Port Server
                 </label>
                 <input
                   type="number"
@@ -332,7 +323,7 @@ export function DeviceOverview({
               </div>
 
               <div className="p-3 bg-[#F9FAF6] border border-[#D4DFC8] rounded-xl text-[11px] text-[#5A6B5A]">
-                <div className="font-semibold text-[#2D3B2D] mb-1">Target WebSocket URL:</div>
+                <div className="font-semibold text-[#2D3B2D] mb-1">Alamat tujuan:</div>
                 <div className="font-mono text-[#3A6B2A] break-all">
                   {apiPort === '443' ? 'wss://' : 'ws://'}{apiHost || '192.168.78.81'}:{apiPort || 3001}/ws/device
                 </div>

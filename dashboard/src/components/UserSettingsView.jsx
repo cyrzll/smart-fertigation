@@ -659,7 +659,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
           </h2>
           <p className="text-xs text-[#8A9B7A] mt-0.5">
             {activeSubTab === 'devices'
-              ? 'Kelola perangkat mikrokontroler ESP32, pairing serial code, dan verifikasi LED realtime'
+              ? 'Kelola, hubungkan, dan verifikasi perangkat fertigasi'
               : 'Kelola informasi profil, kata sandi, dan nomor WhatsApp notifikasi fertigasi'}
           </p>
         </div>
@@ -1099,7 +1099,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   {isOnline(selectedDeviceDetail) ? (
                     <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border border-[#C8D9B0] text-[#3A6B2A] bg-[#F0F4EA]">
                       <span className="w-2 h-2 rounded-full bg-[#7BAF5A] animate-ping" />
-                      <span>Online (Live WS)</span>
+                      <span>Online</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold border border-[#D4DFC8] text-[#8A9B7A]">
@@ -1143,7 +1143,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
 
                 <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] col-span-2">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[#8A9B7A] font-medium">Auth Code (Permanen di Flash)</span>
+                    <span className="text-[#8A9B7A] font-medium">Kode Autentikasi</span>
                     {selectedDeviceDetail.auth_code && (
                       <button
                         onClick={() => {
@@ -1178,20 +1178,20 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                 </div>
 
                 <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] col-span-2">
-                  <span className="text-[#8A9B7A] block font-medium">Heartbeat Terakhir</span>
+                  <span className="text-[#8A9B7A] block font-medium">Terakhir Aktif</span>
                   <span className="font-mono font-medium text-[#2D3B2D] mt-0.5 block">
                     {formatWibFull(selectedDeviceDetail.last_seen)}
                   </span>
                 </div>
               </div>
 
-              {/* Interaktif: Tes Kontrol LED GPIO */}
+              {/* Pengujian lampu perangkat */}
               <div className="bg-emerald-50/70 border-2 border-emerald-200 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <Lightbulb className="w-4 h-4 text-emerald-700" />
                     <h4 className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                      Pengujian Realtime LED ESP32
+                      Pengujian Lampu Perangkat
                     </h4>
                   </div>
                   
@@ -1204,7 +1204,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                         testLedGpio === 4 ? 'bg-emerald-700 text-white shadow-xs' : 'text-slate-600 hover:text-emerald-700'
                       }`}
                     >
-                      GPIO 4 (Eksternal)
+                      Lampu Eksternal
                     </button>
                     <button
                       type="button"
@@ -1213,14 +1213,10 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                         testLedGpio === 2 ? 'bg-emerald-700 text-white shadow-xs' : 'text-slate-600 hover:text-emerald-700'
                       }`}
                     >
-                      GPIO 2 (Onboard)
+                      Lampu Perangkat
                     </button>
                   </div>
                 </div>
-
-                <p className="text-xs text-emerald-800 leading-relaxed">
-                  Kirim sinyal realtime via WebSocket ke ESP32 pada <span className="font-bold font-mono bg-white/80 px-1 rounded border border-emerald-200">GPIO {testLedGpio}</span>.
-                </p>
 
                 {ledNotice && (
                   <div className={`p-2.5 rounded-xl text-xs flex items-center space-x-2 ${
@@ -1273,12 +1269,6 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   </button>
                 </div>
 
-                <div className="text-[11px] text-[#5A6B5A] bg-white/70 p-2.5 rounded-xl border border-emerald-200/80 flex items-start space-x-2">
-                  <Cpu className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Tips Hardware:</strong> Pastikan Anda telah meng-upload file firmware terbaru <code className="font-mono bg-emerald-50 text-emerald-900 px-1 py-0.5 rounded">esp32_smart_fertigation.ino</code> ke modul ESP32 via Arduino IDE agar event <code>LED_CONTROL</code> aktif.
-                  </span>
-                </div>
               </div>
 
               {/* Footer */}
@@ -1328,7 +1318,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   <h3 className="font-bold text-base text-[#2D3B2D]">
                     {pairStep === 1 && 'Tambah Perangkat ESP32'}
                     {pairStep === 2 && 'Scan QR Code Perangkat'}
-                    {pairStep === 3 && 'Konfirmasi Kedipan LED (GPIO 34)'}
+                    {pairStep === 3 && 'Konfirmasi Kedipan Lampu'}
                   </h3>
                 </div>
                 <button
@@ -1366,7 +1356,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                     )}
 
                     <p className="text-xs text-[#5A6B5A]">
-                      Masukkan nomor seri perangkat yang telah diatur pada firmware ESP32 (<code className="font-mono bg-[#FAFAF7] px-1.5 py-0.5 rounded border border-[#D4DFC8] text-[#3A6B2A]">const char* serial_code = "{inputSerialCode || 'tes123'}";</code>):
+                      Masukkan nomor seri yang tertera pada perangkat atau pindai kode QR.
                     </p>
 
                     <div className="space-y-3">
@@ -1411,15 +1401,15 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                           {isDeviceOnlineWs ? (
                             <div className="flex items-center space-x-2 text-xs text-[#3A6B2A] font-medium bg-[#F0F4EA] border border-[#C8D9B0] px-3.5 py-2.5 rounded-xl">
                               <span className="w-2.5 h-2.5 rounded-full bg-[#7BAF5A] animate-ping shrink-0" />
-                              <span>ESP32 "{trimmedSerial}" Terdeteksi Online (WebSocket Ready)</span>
+                              <span>Perangkat "{trimmedSerial}" terdeteksi online</span>
                             </div>
                           ) : (
                             <div className="flex items-start space-x-2.5 text-xs text-red-700 bg-red-50 border-2 border-red-300 p-3.5 rounded-xl">
                               <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
                               <div className="space-y-0.5">
-                                <p className="font-bold text-red-800">Perangkat ESP32 Sedang OFFLINE</p>
+                                <p className="font-bold text-red-800">Perangkat sedang offline</p>
                                 <p className="text-[11px] text-red-600 leading-relaxed">
-                                  Modul ESP32 dengan nomor seri ini belum terhubung ke WebSocket server. Nyalakan ESP32 dan hubungkan ke Wi-Fi terlebih dahulu agar dapat menerima sinyal kedip LED.
+                                  Nyalakan perangkat dan pastikan sudah terhubung ke Wi-Fi, lalu coba kembali.
                                 </p>
                               </div>
                             </div>
@@ -1506,7 +1496,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                     </div>
                     <h4 className="font-bold text-sm text-[#2D3B2D]">Perhatikan Lampu LED ESP32!</h4>
                     <p className="text-xs text-[#5A6B5A] leading-relaxed">
-                      Sinyal konfirmasi telah dikirim. Lampu <strong>LED Onboard (GPIO 2)</strong> / <strong>GPIO 4</strong> pada modul ESP32 akan berkedip antara <strong>1 sampai 8 kali</strong>.
+                      Sinyal konfirmasi telah dikirim. Lampu perangkat akan berkedip antara <strong>1 sampai 8 kali</strong>.
                     </p>
                   </div>
 

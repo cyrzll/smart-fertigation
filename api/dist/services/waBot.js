@@ -16,6 +16,7 @@ const PH_SAFE_MIN = 5.5;
 const PH_SAFE_MAX = 6.5;
 const TDS_SAFE_MIN = 800;
 const TDS_SAFE_MAX = 1400;
+const SENSOR_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const sensorAlertStates = new Map();
 const formatWibDateTime = (value) => {
     if (!value)
@@ -63,7 +64,7 @@ const getSensorRange = (value, min, max) => {
 async function handleTelemetrySpike(event) {
     const stateKey = event.registeredDeviceCode || event.serialCode || event.deviceCode;
     const existingState = sensorAlertStates.get(stateKey);
-    const previous = existingState || { ph: null, tds: null };
+    const previous = existingState || { ph: null, tds: null, lastAlertAt: 0 };
     const phDelta = event.ph != null && previous.ph != null ? event.ph - previous.ph : null;
     const tdsDelta = event.tds != null && previous.tds != null ? event.tds - previous.tds : null;
     const phSpiked = phDelta != null && Math.abs(phDelta) >= PH_SPIKE_THRESHOLD;
@@ -76,12 +77,17 @@ async function handleTelemetrySpike(event) {
         || (existingState ? phRange !== previousPhRange : phRange !== 'normal'));
     const shouldAlertTds = event.tds != null && (tdsSpiked
         || (existingState ? tdsRange !== previousTdsRange : tdsRange !== 'normal'));
+    const now = Date.now();
+    const isInCooldown = now - previous.lastAlertAt < SENSOR_ALERT_COOLDOWN_MS;
+    const shouldSendAlert = (shouldAlertPh || shouldAlertTds) && !isInCooldown;
     sensorAlertStates.set(stateKey, {
         // Pertahankan nilai referensi sampai perubahan mencapai ambang signifikan.
         ph: shouldAlertPh || !existingState ? (event.ph ?? previous.ph) : previous.ph,
         tds: shouldAlertTds || !existingState ? (event.tds ?? previous.tds) : previous.tds,
+        // Reservasi cooldown sebelum proses kirim untuk mencegah event paralel mengirim dua pesan.
+        lastAlertAt: shouldSendAlert ? now : previous.lastAlertAt,
     });
-    if (!shouldAlertPh && !shouldAlertTds)
+    if (!shouldSendAlert)
         return;
     const [recipients] = await pool.query(`SELECT DISTINCT uwn.whatsapp_number, u.name, u.uid
      FROM devices d

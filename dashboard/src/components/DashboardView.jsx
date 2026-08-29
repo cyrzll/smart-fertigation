@@ -383,7 +383,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
           <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-[#D4DFC8] bg-white text-xs font-semibold shadow-xs">
             <span className={`w-2 h-2 rounded-full ${isLiveWs ? 'bg-[#7BAF5A] animate-pulse' : 'bg-slate-400'}`} />
             <span className={isLiveWs ? 'text-[#3A6B2A]' : 'text-slate-500'}>
-              {isLiveWs ? 'Live WebSocket' : 'Polling Aktif'}
+              {isLiveWs ? 'Data Langsung' : 'Memperbarui Data'}
             </span>
           </div>
 
@@ -415,7 +415,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
           <div className="flex items-center space-x-2">
             <Activity className="w-4 h-4 text-[#7BAF5A]" />
             <h3 className="text-sm font-bold text-[#2D3B2D] uppercase tracking-wider">
-              Telemetri Sensor Realtime
+              Data Sensor Terkini
             </h3>
           </div>
           <span className="text-[11px] text-[#8A9B7A] font-mono">
@@ -434,7 +434,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor pH Air Tandon</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Modul pH-4502C (Pin Po - GPIO 34)</p>
+                  <p className="text-[11px] text-[#8A9B7A]">Tingkat keasaman air</p>
                 </div>
               </div>
 
@@ -488,7 +488,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor TDS & EC Nutrisi</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">TDS Meter V1.0 (Pin A - GPIO 32)</p>
+                  <p className="text-[11px] text-[#8A9B7A]">Konsentrasi nutrisi air</p>
                 </div>
               </div>
 

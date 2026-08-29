@@ -144,12 +144,12 @@ export function App() {
 
     // 9. LED Test result
     const unsubLed = bleService.on('led_result', (data) => {
-      addToast('info', `LED berkedip ${data.times} kali pada GPIO 2 & GPIO 4.`, 'Test LED Selesai');
+      addToast('info', `Lampu berkedip ${data.times} kali.`, 'Tes Lampu Selesai');
     });
 
     // 10. Valve result
     const unsubValve = bleService.on('valve_result', (data) => {
-      addToast('info', `Valve GPIO ${data.gpio} berhasil diatur ke ${data.action}.`, 'Kontrol Valve');
+      addToast('info', `Valve berhasil ${data.action === 'OPEN' ? 'dibuka' : 'ditutup'}.`, 'Kontrol Valve');
     });
 
     // 11. Restart result
@@ -367,8 +367,7 @@ export function App() {
                     Hubungkan ke ESP32 Fertigasi
                   </h2>
                   <p className="text-sm text-[#8A9B7A] max-w-lg mx-auto leading-relaxed">
-                    Kelola konfigurasi Wi-Fi, pantau telemetri sensor, dan kendalikan aktuator katup fertigasi secara
-                    langsung via Bluetooth Low Energy (BLE).
+                    Hubungkan perangkat ke Wi-Fi dan kelola sistem fertigasi dengan mudah.
                   </p>
                 </div>
 
@@ -402,9 +401,9 @@ export function App() {
                   <Wifi className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Wi-Fi Provisioning</h3>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Pengaturan Wi-Fi</h3>
                   <p className="text-xs text-[#8A9B7A] leading-relaxed">
-                    Pindai hotspot sekitar dan konfigurasi SSID & sandi Wi-Fi tanpa perlu kabel serial.
+                    Pilih jaringan dan masukkan kata sandi Wi-Fi perangkat.
                   </p>
                 </div>
               </div>
@@ -414,9 +413,9 @@ export function App() {
                   <Activity className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Telemetri Real-Time</h3>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Data Sensor</h3>
                   <p className="text-xs text-[#8A9B7A] leading-relaxed">
-                    Pantau metrik suhu, kelembaban, media tanah, level air, EC, dan pH secara nirkabel.
+                    Pantau suhu, kelembapan, kondisi media, level air, EC, dan pH.
                   </p>
                 </div>
               </div>
@@ -426,9 +425,9 @@ export function App() {
                   <Sliders className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Kendali Aktuator</h3>
+                  <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Kontrol Fertigasi</h3>
                   <p className="text-xs text-[#8A9B7A] leading-relaxed">
-                    Buka dan tutup relay katup fertigasi zona A & B serta uji coba blink indikator LED.
+                    Buka atau tutup valve dan uji lampu indikator perangkat.
                   </p>
                 </div>
               </div>
@@ -440,7 +439,6 @@ export function App() {
                 <HelpCircle className="w-4 h-4 text-[#7BAF5A] shrink-0" />
                 <span>Membutuhkan Google Chrome, Microsoft Edge, atau browser Chromium dengan Bluetooth aktif.</span>
               </div>
-              <span className="font-mono text-[11px] text-[#3A6B2A] font-semibold hidden sm:inline">Web Bluetooth API v1</span>
             </div>
           </div>
         ) : (
@@ -472,7 +470,7 @@ export function App() {
                 }`}
               >
                 <Wifi className="w-4 h-4" />
-                <span>Koneksi Wi-Fi & Jaringan</span>
+                <span>Pengaturan Wi-Fi</span>
               </button>
 
               <button
@@ -484,7 +482,7 @@ export function App() {
                 }`}
               >
                 <Terminal className="w-4 h-4" />
-                <span>Konsol Log BLE</span>
+                <span>Diagnostik</span>
                 {logs.length > 0 && (
                   <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-semibold ${
                     activeTab === 'console' ? 'bg-white/20 text-white' : 'bg-[#E8EDE0] text-[#5A6B5A]'
@@ -525,8 +523,7 @@ export function App() {
       {/* Footer */}
       <footer className="border-t border-[#D4DFC8] bg-white/60 py-4 text-center text-xs text-[#8A9B7A]">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Smart Fertigation AIoT • ESP32 BLE Web Manager</span>
-          <span className="text-[11px] font-mono text-[#5A6B5A]">GATT Service: {isSupported ? 'Ready' : 'Unsupported'}</span>
+          <span>Smart Fertigation</span>
         </div>
       </footer>
     </div>

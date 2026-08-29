@@ -79,8 +79,8 @@ export function TelemetryControl({
               <Activity className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Live Sensor Telemetri Realtime</h3>
-              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Streaming data aktual sensor pH (GPIO 34) & TDS (GPIO 32) via BLE</p>
+              <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Data Sensor</h3>
+              <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Kondisi pH dan nutrisi terkini</p>
             </div>
           </div>
 
@@ -89,7 +89,7 @@ export function TelemetryControl({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg sm:rounded-xl border border-[#C8D9B0] text-[#5A6B5A] hover:bg-[#F0F4EA] hover:text-[#3A6B2A] text-xs font-semibold transition active:scale-95 cursor-pointer shadow-2xs self-end sm:self-auto"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Sync Sensor</span>
+            <span>Perbarui</span>
           </button>
         </div>
 
@@ -102,9 +102,6 @@ export function TelemetryControl({
                 <TestTube className="w-5 h-5 text-purple-600" />
                 <span className="text-xs font-bold text-[#2D3B2D]">Sensor pH-4502C</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
-                GPIO 34
-              </span>
             </div>
 
             <div className="flex items-baseline gap-2">
@@ -132,9 +129,6 @@ export function TelemetryControl({
                 <Zap className="w-5 h-5 text-amber-500" />
                 <span className="text-xs font-bold text-[#2D3B2D]">Sensor TDS Meter V1.0</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
-                GPIO 32
-              </span>
             </div>
 
             <div className="flex items-baseline gap-2">
@@ -170,7 +164,7 @@ export function TelemetryControl({
           </div>
           <div>
             <h3 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Kendali Valve Irigasi</h3>
-            <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Pengujian manual relay valve via BLE</p>
+            <p className="text-[10px] sm:text-xs text-[#8A9B7A]">Buka atau tutup aliran air secara manual</p>
           </div>
         </div>
 
@@ -183,9 +177,6 @@ export function TelemetryControl({
                   <div className="w-2.5 h-2.5 rounded-full bg-[#7BAF5A]"></div>
                   <h4 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Valve 1 (Zona A)</h4>
                 </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
-                  GPIO 25
-                </span>
               </div>
 
               <div className="flex items-center justify-between bg-white rounded-xl p-3 border border-[#D4DFC8] mb-3">
@@ -252,9 +243,6 @@ export function TelemetryControl({
                   <div className="w-2.5 h-2.5 rounded-full bg-blue-500"></div>
                   <h4 className="text-xs sm:text-sm font-bold text-[#2D3B2D]">Valve 2 (Zona B)</h4>
                 </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white border border-[#D4DFC8] text-[#5A6B5A]">
-                  GPIO 26
-                </span>
               </div>
 
               <div className="flex items-center justify-between bg-white rounded-xl p-3 border border-[#D4DFC8] mb-3">
