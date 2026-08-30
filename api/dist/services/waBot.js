@@ -8,6 +8,7 @@ let sock = null;
 let qrCodeData = null;
 let connectionState = 'disconnected';
 let connectedUser = null;
+let reconnectTimer = null;
 const sessionDir = path.resolve(process.cwd(), 'session');
 const logger = pino({ level: 'silent' });
 const PH_SPIKE_THRESHOLD = 0.5;
@@ -191,6 +192,10 @@ export async function initWaBot() {
                 console.log('📱 QR Code WhatsApp Bot (Baileys) siap di-scan pada halaman /admin Dashboard.');
             }
             if (connection === 'open') {
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
                 connectionState = 'connected';
                 qrCodeData = null;
                 const userJid = sock?.user?.id || '';
@@ -202,7 +207,6 @@ export async function initWaBot() {
             if (connection === 'close') {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 console.log(`⚠️ Baileys Connection closed with status code: ${statusCode}`);
-                const wasConnected = connectionState === 'connected';
                 connectionState = 'disconnected';
                 if (statusCode === DisconnectReason.loggedOut) {
                     console.log('🔒 WhatsApp Bot Logged Out. Clearing session directory...');
@@ -215,14 +219,15 @@ export async function initWaBot() {
                         catch (_) { }
                     }
                 }
-                else if (wasConnected || statusCode === DisconnectReason.restartRequired) {
-                    console.log('🔄 Reconnecting WhatsApp Bot via Baileys...');
-                    setTimeout(() => {
-                        initWaBot();
-                    }, 3000);
-                }
                 else {
-                    console.log('⏳ Waiting for QR Code scan...');
+                    console.log('🔄 Reconnecting WhatsApp Bot via Baileys...');
+                    if (!reconnectTimer) {
+                        reconnectTimer = setTimeout(() => {
+                            void initWaBot().finally(() => {
+                                reconnectTimer = null;
+                            });
+                        }, 3000);
+                    }
                 }
             }
         });

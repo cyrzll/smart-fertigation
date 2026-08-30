@@ -22,6 +22,7 @@ let sock: WASocket | null = null;
 let qrCodeData: string | null = null;
 let connectionState: 'disconnected' | 'connecting' | 'qr_ready' | 'connected' = 'disconnected';
 let connectedUser: { id?: string; name?: string; phone?: string } | null = null;
+let reconnectTimer: NodeJS.Timeout | null = null;
 
 const sessionDir = path.resolve(process.cwd(), 'session');
 
@@ -247,6 +248,10 @@ export async function initWaBot() {
       }
 
       if (connection === 'open') {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         connectionState = 'connected';
         qrCodeData = null;
 
@@ -261,7 +266,6 @@ export async function initWaBot() {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         console.log(`⚠️ Baileys Connection closed with status code: ${statusCode}`);
 
-        const wasConnected = connectionState === 'connected';
         connectionState = 'disconnected';
 
         if (statusCode === DisconnectReason.loggedOut) {
@@ -273,13 +277,15 @@ export async function initWaBot() {
               fs.rmSync(sessionDir, { recursive: true, force: true });
             } catch (_) {}
           }
-        } else if (wasConnected || statusCode === DisconnectReason.restartRequired) {
-          console.log('🔄 Reconnecting WhatsApp Bot via Baileys...');
-          setTimeout(() => {
-            initWaBot();
-          }, 3000);
         } else {
-          console.log('⏳ Waiting for QR Code scan...');
+          console.log('🔄 Reconnecting WhatsApp Bot via Baileys...');
+          if (!reconnectTimer) {
+            reconnectTimer = setTimeout(() => {
+              void initWaBot().finally(() => {
+                reconnectTimer = null;
+              });
+            }, 3000);
+          }
         }
       }
     });

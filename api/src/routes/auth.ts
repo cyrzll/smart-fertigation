@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import crypto from 'crypto';
 import { pool } from '../db.js';
-import { sendWaMessage, normalizePhoneAndJid } from '../services/waBot.js';
+import { sendWaMessage, normalizePhoneAndJid, getWaStatus } from '../services/waBot.js';
 import { sendBlinkToDevice, sendAuthApprovedToDevice, isDeviceSocketConnected, sendLedControlToDevice } from '../services/wsServer.js';
 
 const app = new Hono();
@@ -337,14 +337,32 @@ app.post('/users/:userId/wa-numbers/:numberId/resend', async (c) => {
     const record = rows[0];
     const newOtp = String(Math.floor(100000 + Math.random() * 900000));
 
+    const waStatus = getWaStatus();
+    if (waStatus.state !== 'connected') {
+      return c.json({
+        success: false,
+        message: 'WhatsApp Bot belum terhubung. Hubungkan atau scan ulang QR WhatsApp Bot, lalu coba kirim ulang OTP.',
+        wa_state: waStatus.state,
+      }, 503);
+    }
+
+    try {
+      await sendWaMessage(
+        record.whatsapp_number,
+        `🔐 *KODE OTP BARU SMART FERTIGATION*\n\nKode OTP Anda adalah: *${newOtp}*\n\nMasukkan kode ini pada dashboard atau balaskan *OTP ${newOtp}* via WhatsApp ini.`
+      );
+    } catch (sendError: any) {
+      return c.json({
+        success: false,
+        message: sendError.message || 'Gagal mengirim OTP melalui WhatsApp Bot.',
+      }, 503);
+    }
+
+    // Simpan OTP hanya setelah WhatsApp menerima permintaan pengiriman. Dengan
+    // begitu OTP lama tidak rusak saat koneksi bot sedang terputus.
     await pool.query(
       "UPDATE user_whatsapp_numbers SET otp = ?, status = 'pending' WHERE id = ?",
       [newOtp, numberId]
-    );
-
-    await sendWaMessage(
-      record.whatsapp_number,
-      `🔐 *KODE OTP BARU SMART FERTIGATION*\n\nKode OTP Anda adalah: *${newOtp}*\n\nMasukkan kode ini pada dashboard atau balaskan *OTP ${newOtp}* via WhatsApp ini.`
     );
 
     return c.json({ success: true, message: 'Kode OTP baru telah dikirimkan via WhatsApp!' });

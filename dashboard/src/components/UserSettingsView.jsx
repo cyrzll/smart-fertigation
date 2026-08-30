@@ -11,6 +11,7 @@ import { actions } from 'astro:actions';
 import api from '../lib/axios';
 import { goeyToast } from 'goey-toast';
 import { ConfirmModal } from './ConfirmModal';
+import { App as EspBluetoothManager } from '../../../esp/apps/src/App.jsx';
 
 const formatWibFull = (dateStr) => {
   if (!dateStr) return '-';
@@ -901,6 +902,11 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
 
       {/* View 2: ESP32 Device Management Table */}
       {activeSubTab === 'devices' && (
+        <div className="space-y-5">
+          <section className="bg-white border border-[#D4DFC8] rounded-xl p-5 shadow-xs">
+            <EspBluetoothManager embedded />
+          </section>
+
         <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
             <div className="flex items-center space-x-2.5">
@@ -1038,7 +1044,8 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
             </tbody>
           </table>
         </div>
-      </div>
+        </div>
+        </div>
       )}
 
       {/* ========================================================================= */}
