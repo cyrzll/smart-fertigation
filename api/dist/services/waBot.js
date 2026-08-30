@@ -525,8 +525,8 @@ Status        : Aktif`;
                         const controlDevice = userDevices.find((d) => isDeviceSocketConnected(d.device_code, d.serial_code)) || primaryDevice;
                         const [manualValves] = await pool.query(`SELECT id, name, gpio, description
                FROM valves
-               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
-               ORDER BY (device_id = ?) DESC, name ASC, id ASC`, [controlDevice.id, controlDevice.id]);
+               WHERE is_active = 1
+               ORDER BY name ASC, id ASC`);
                         await pool.query('UPDATE devices SET mode = ? WHERE id = ? AND user_id = ?', ['MANUAL', controlDevice.id, userId]);
                         const valveList = manualValves.length > 0
                             ? manualValves.map((v, index) => `${index + 1}. *${v.name}*\n   GPIO ${v.gpio || '-'}${v.description ? ` — ${v.description}` : ''}`).join('\n')
@@ -566,8 +566,8 @@ Contoh: *ON 1 10* untuk membuka ${manualValves[0]?.name || 'valve nomor 1'} sela
                         const controlDevice = userDevices.find((d) => isDeviceSocketConnected(d.device_code, d.serial_code)) || primaryDevice;
                         const [valves] = await pool.query(`SELECT id, name, gpio, description
                FROM valves
-               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
-               ORDER BY (device_id = ?) DESC, name ASC, id ASC`, [controlDevice.id, controlDevice.id]);
+               WHERE is_active = 1
+               ORDER BY name ASC, id ASC`);
                         const valve = Number.isInteger(valveNumber) && valveNumber >= 1 ? valves[valveNumber - 1] : null;
                         if (!valve) {
                             replyText = `⚠️ Nomor valve tidak valid. Pilih nomor 1-${valves.length || 0}. Ketik *TEST VALVE* untuk melihat daftar terbaru.`;

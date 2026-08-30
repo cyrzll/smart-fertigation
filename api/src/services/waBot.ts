@@ -623,9 +623,8 @@ Status        : Aktif`;
             const [manualValves]: any = await pool.query(
               `SELECT id, name, gpio, description
                FROM valves
-               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
-               ORDER BY (device_id = ?) DESC, name ASC, id ASC`,
-              [controlDevice.id, controlDevice.id]
+               WHERE is_active = 1
+               ORDER BY name ASC, id ASC`
             );
 
             await pool.query('UPDATE devices SET mode = ? WHERE id = ? AND user_id = ?', ['MANUAL', controlDevice.id, userId]);
@@ -673,9 +672,8 @@ Contoh: *ON 1 10* untuk membuka ${manualValves[0]?.name || 'valve nomor 1'} sela
             const [valves]: any = await pool.query(
               `SELECT id, name, gpio, description
                FROM valves
-               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
-               ORDER BY (device_id = ?) DESC, name ASC, id ASC`,
-              [controlDevice.id, controlDevice.id]
+               WHERE is_active = 1
+               ORDER BY name ASC, id ASC`
             );
             const valve = Number.isInteger(valveNumber) && valveNumber >= 1 ? valves[valveNumber - 1] : null;
 
