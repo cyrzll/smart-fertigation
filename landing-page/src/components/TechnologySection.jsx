@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { gsap, ScrollTrigger } from '../hooks/useGsap';
-import { Cpu, ShieldCheck, Database, Radio, Droplets, ArrowRight, CheckCircle2, Server } from 'lucide-react';
+import { Cpu, Database, Radio, Droplets, ArrowRight, CheckCircle2, Server } from 'lucide-react';
 import { DASHBOARD_URL } from '../config';
 
 export const TechnologySection = () => {
@@ -12,24 +12,18 @@ export const TechnologySection = () => {
   const techSteps = [
     {
       step: '01',
-      title: 'Proteksi Fisik Anti-Dwarfing',
-      desc: 'Smart Crop Protection berbasis proteksi fisik (barrier/screen) yang efektif memblokir hama serangga vektor pembawa virus dwarfing.',
-      icon: ShieldCheck,
-    },
-    {
-      step: '02',
       title: 'Sistem Fertigasi Presisi',
       desc: 'Penyaluran air dan nutrisi pupuk otomatis langsung ke akar tanaman guna mengeliminasi pemborosan biaya input (zero waste).',
       icon: Droplets,
     },
     {
-      step: '03',
+      step: '02',
       title: 'Mikrokontroler ESP32',
       desc: 'Node pintar pengontrol relay & solenoid valve yang mengeksekusi penyiraman secara otomatis sesuai jadwal fase tanam (HST).',
       icon: Cpu,
     },
     {
-      step: '04',
+      step: '03',
       title: 'Hono API & Dashboard IoT',
       desc: 'Server backend Node.js dan dashboard kontrol realtime untuk memonitor dan mengontrol sistem fertigasi dari mana saja.',
       icon: Server,
@@ -84,12 +78,12 @@ export const TechnologySection = () => {
             Arsitektur Pipeline AIoT
           </span>
           <h3 className="text-xl sm:text-2xl font-black text-[#16381E]">
-            Empat Tahapan Proteksi &amp; Fertigasi Presisi
+            Tiga Tahapan Fertigasi Presisi
           </h3>
         </div>
 
         {/* Tech Pipeline Grid (Thin subtle outline) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-12 sm:mb-16">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-12 sm:mb-16">
           {techSteps.map((t, idx) => {
             const Icon = t.icon;
             return (

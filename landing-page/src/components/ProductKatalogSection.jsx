@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { gsap } from '../hooks/useGsap';
-import { ShoppingBag, ArrowRight, CheckCircle2, Sparkles, Tag, Flame } from 'lucide-react';
+import { ShoppingBag, ArrowRight, CheckCircle2, Sparkles, Tag } from 'lucide-react';
 
 export const ProductKatalogSection = () => {
   const [products, setProducts] = useState([]);
@@ -107,12 +107,6 @@ export const ProductKatalogSection = () => {
                       {prod.category}
                     </div>
 
-                    {prod.sold > 0 && (
-                      <div className="absolute top-3 right-3 border border-amber-600/25 bg-[#FAF7EE]/90 text-amber-800 px-3 py-0.5 rounded-full text-xs font-black flex items-center space-x-1">
-                        <Flame className="w-3.5 h-3.5 fill-amber-600 text-amber-600" />
-                        <span>{prod.sold} kg Terjual</span>
-                      </div>
-                    )}
                   </div>
 
                   {/* Body Content */}

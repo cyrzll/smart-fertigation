@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { gsap } from '../hooks/useGsap';
-import { Sparkles, ArrowUpRight, HeartHandshake } from 'lucide-react';
+import { ArrowUpRight, Camera, Music2 } from 'lucide-react';
 import { DASHBOARD_URL } from '../config';
 
 export const Footer = () => {
@@ -75,6 +75,14 @@ export const Footer = () => {
               <span>Dashboard Fertigasi</span>
               <ArrowUpRight className="w-3.5 h-3.5 stroke-[2.5]" />
             </a>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <a href="https://www.instagram.com/ppk.ormawatikediri/" target="_blank" rel="noopener noreferrer" aria-label="Instagram PPK Ormawa TI Kediri" className="inline-flex items-center gap-1.5 border border-[#16381E]/20 rounded-full px-3 py-1.5 text-xs font-bold hover:border-[#4B7F38] hover:text-[#4B7F38] transition-colors">
+                <Camera className="w-3.5 h-3.5" /> Instagram
+              </a>
+              <a href="https://www.tiktok.com/@ppk.ormawatikediri" target="_blank" rel="noopener noreferrer" aria-label="TikTok PPK Ormawa TI Kediri" className="inline-flex items-center gap-1.5 border border-[#16381E]/20 rounded-full px-3 py-1.5 text-xs font-bold hover:border-[#4B7F38] hover:text-[#4B7F38] transition-colors">
+                <Music2 className="w-3.5 h-3.5" /> TikTok
+              </a>
+            </div>
           </div>
 
         </div>

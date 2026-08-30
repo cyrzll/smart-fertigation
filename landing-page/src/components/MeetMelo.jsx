@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { gsap } from '../hooks/useGsap';
-import { ShieldCheck, Cpu, HeartHandshake, TrendingUp, Sparkles, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Cpu, HeartHandshake, TrendingUp, Sparkles, CheckCircle2, ChevronRight } from 'lucide-react';
 
 export const MeetMelo = () => {
   const [activeFeature, setActiveFeature] = useState(0);
@@ -13,15 +13,6 @@ export const MeetMelo = () => {
   const features = [
     {
       id: 0,
-      title: 'Smart Crop Protection Anti-Dwarfing',
-      subtitle: 'Memblokir Risiko Serangan Virus Dwarfing secara Fisik',
-      icon: ShieldCheck,
-      meloImg: '/icon/melo_confident.png',
-      desc: 'MELO mengawal proteksi tanaman melon dari ancaman virus dwarfing yang dibawa oleh vektor serangga melalui instalasi proteksi fisik terpadu (barrier/screen), menekan risiko gagal panen hingga titik nol.',
-      badges: ['Proteksi Fisik Tanaman', 'Resiko Gagal Panen 0%', 'Kualitas Buah Unggulan'],
-    },
-    {
-      id: 1,
       title: 'Fertigasi Otomatis Presisi AIoT',
       subtitle: 'Eliminasi Pemborosan Pupuk & Air (Prinsip Zero Waste)',
       icon: Cpu,
@@ -30,7 +21,7 @@ export const MeetMelo = () => {
       badges: ['Otomatisasi Fase HST', 'Hemat Nutrisi 30%+', 'Integrasi SDGs No. 12'],
     },
     {
-      id: 2,
+      id: 1,
       title: 'Pendamping Petani Ngablak (Local Heroes)',
       subtitle: 'Mentransfer Keterampilan Digital ke Kelompok Tani Sido Maju Tanjung',
       icon: HeartHandshake,
@@ -39,7 +30,7 @@ export const MeetMelo = () => {
       badges: ['Transfer Teknologi', 'Lahan 116 Hektar', 'Kemitraan Berkelanjutan'],
     },
     {
-      id: 3,
+      id: 2,
       title: 'Akselerasi Ekonomi & Margin Keuntungan',
       subtitle: 'Penguatan Ekonomi Nasional Dimulai dari Tingkat Desa',
       icon: TrendingUp,
