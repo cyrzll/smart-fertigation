@@ -376,19 +376,19 @@ export function App({ embedded = false }) {
           /* ===================================================================
              UNCONNECTED STATE: Hero & Bluetooth Pairing Card
              =================================================================== */
-          <div className="max-w-3xl mx-auto my-6 space-y-8">
-            <div className="bg-white border border-[#D4DFC8] rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-xs">
-              <div className="relative z-10 space-y-6">
+          <div className={`max-w-3xl mx-auto ${embedded ? 'my-2 space-y-4' : 'my-6 space-y-8'}`}>
+            <div className={`bg-white border border-[#D4DFC8] relative overflow-hidden shadow-xs ${embedded ? 'rounded-2xl p-5 sm:p-7' : 'rounded-3xl p-8 sm:p-12'} text-center`}>
+              <div className={`relative z-10 ${embedded ? 'space-y-4' : 'space-y-6'}`}>
                 {/* Glowing Bluetooth Radar Pulse Icon */}
-                <div className="relative mx-auto w-24 h-24 flex items-center justify-center">
+                <div className={`relative mx-auto flex items-center justify-center ${embedded ? 'w-16 h-16' : 'w-24 h-24'}`}>
                   <div className="absolute inset-0 rounded-full bg-[#7BAF5A]/15 animate-radar pointer-events-none" />
-                  <div className="relative w-20 h-20 rounded-2xl bg-[#E8F2DF] border border-[#C8D9B0] flex items-center justify-center shadow-xs">
-                    <Bluetooth className="w-10 h-10 text-[#7BAF5A]" />
+                  <div className={`relative rounded-2xl bg-[#E8F2DF] border border-[#C8D9B0] flex items-center justify-center shadow-xs ${embedded ? 'w-14 h-14' : 'w-20 h-20'}`}>
+                    <Bluetooth className={`${embedded ? 'w-7 h-7' : 'w-10 h-10'} text-[#7BAF5A]`} />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <h2 className="text-2xl sm:text-3xl font-extrabold text-[#2D3B2D] tracking-tight">
+                  <h2 className={`${embedded ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'} font-extrabold text-[#2D3B2D] tracking-tight`}>
                     Hubungkan ke ESP32 Fertigasi
                   </h2>
                   <p className="text-sm text-[#8A9B7A] max-w-lg mx-auto leading-relaxed">
@@ -401,7 +401,7 @@ export function App({ embedded = false }) {
                   <button
                     onClick={handleConnect}
                     disabled={isConnecting || !isSupported}
-                    className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-[#7BAF5A] hover:bg-[#6A9E49] text-white font-bold text-base shadow-sm shadow-[#7BAF5A]/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
+                    className={`inline-flex w-full sm:w-auto items-center justify-center gap-2.5 rounded-2xl bg-[#7BAF5A] hover:bg-[#6A9E49] text-white font-bold shadow-sm shadow-[#7BAF5A]/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer ${embedded ? 'px-5 py-3 text-sm' : 'px-8 py-4 text-base'}`}
                   >
                     {isConnecting ? (
                       <>
@@ -420,8 +420,8 @@ export function App({ embedded = false }) {
             </div>
 
             {/* Feature Highlights Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+            <div className={`grid grid-cols-1 sm:grid-cols-3 ${embedded ? 'gap-2.5' : 'gap-4'}`}>
+              <div className={`bg-white border border-[#D4DFC8] rounded-2xl shadow-2xs flex items-start ${embedded ? 'p-3.5 gap-2.5' : 'p-5 gap-3.5'}`}>
                 <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
                   <Wifi className="w-5 h-5" />
                 </div>
@@ -433,7 +433,7 @@ export function App({ embedded = false }) {
                 </div>
               </div>
 
-              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+              <div className={`bg-white border border-[#D4DFC8] rounded-2xl shadow-2xs flex items-start ${embedded ? 'p-3.5 gap-2.5' : 'p-5 gap-3.5'}`}>
                 <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
                   <Activity className="w-5 h-5" />
                 </div>
@@ -445,7 +445,7 @@ export function App({ embedded = false }) {
                 </div>
               </div>
 
-              <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-2xs flex items-start gap-3.5">
+              <div className={`bg-white border border-[#D4DFC8] rounded-2xl shadow-2xs flex items-start ${embedded ? 'p-3.5 gap-2.5' : 'p-5 gap-3.5'}`}>
                 <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0] shrink-0">
                   <Sliders className="w-5 h-5" />
                 </div>

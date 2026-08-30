@@ -647,13 +647,13 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="space-y-5"
+      className="space-y-4 sm:space-y-5"
     >
       {/* Hidden processor for file QR scanning */}
       <div id="qr-file-processor" className="hidden"></div>
 
       {/* Header with Sub-Tab Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-[#2D3B2D]">
             {activeSubTab === 'devices' ? 'Manajemen Perangkat ESP32' : 'Pengaturan Profil & Akun'}
@@ -665,8 +665,8 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-1 bg-white border border-[#D4DFC8] p-1 rounded-xl shadow-xs">
+        <div className="flex flex-col xs:flex-row xs:items-center gap-2 w-full lg:w-auto">
+          <div className="grid grid-cols-2 bg-white border border-[#D4DFC8] p-1 rounded-xl shadow-xs w-full xs:w-auto">
             <button
               onClick={() => setActiveSubTab('devices')}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
@@ -903,11 +903,11 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
       {/* View 2: ESP32 Device Management Table */}
       {activeSubTab === 'devices' && (
         <div className="space-y-5">
-          <section className="bg-white border border-[#D4DFC8] rounded-xl p-5 shadow-xs">
+          <section className="bg-white border border-[#D4DFC8] rounded-xl p-3 sm:p-5 shadow-xs overflow-hidden">
             <EspBluetoothManager embedded />
           </section>
 
-        <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
+        <div className="bg-white border border-[#D4DFC8] rounded-xl p-3 sm:p-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
             <div className="flex items-center space-x-2.5">
               <Cpu className="w-5 h-5 text-[#7BAF5A]" />
@@ -917,7 +917,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
               </div>
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-col xs:flex-row xs:items-center gap-2 w-full sm:w-auto">
               <span className="px-2.5 py-1 rounded-full text-xs font-medium border border-[#D4DFC8] text-[#5A6B5A]">
                 {devices.length} Perangkat
               </span>
@@ -933,7 +933,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   setPendingDeviceId(null);
                   setShowPairModal(true);
                 }}
-                className="border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                className="w-full xs:w-auto border-2 border-[#7BAF5A] text-[#4A7A3A] hover:bg-[#7BAF5A] hover:text-white font-semibold px-3.5 py-2 rounded-xl text-xs transition flex items-center justify-center space-x-1.5 shadow-sm cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>Pairing / Tambah ESP32</span>
@@ -942,8 +942,9 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
           </div>
 
         {/* Devices Table (Streamlined) */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
+        <p className="sm:hidden text-[10px] text-[#8A9B7A]">Geser tabel ke samping untuk melihat seluruh informasi dan aksi.</p>
+        <div className="overflow-x-auto overscroll-x-contain -mx-3 px-3 sm:mx-0 sm:px-0 pb-1">
+          <table className="w-full min-w-[760px] text-left text-sm border-collapse">
             <thead>
               <tr className="border-b border-[#E8EDE0] text-xs font-semibold text-[#8A9B7A] bg-[#FAFAF7]">
                 <th className="py-3 px-3.5 rounded-l-lg">#</th>
@@ -1053,7 +1054,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
       {/* ========================================================================= */}
       <AnimatePresence>
         {selectedDeviceDetail && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -1071,7 +1072,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative z-10 w-full max-w-lg bg-white border border-[#D4DFC8] rounded-2xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto"
+              className="relative z-10 w-full max-w-lg bg-white border border-[#D4DFC8] rounded-t-2xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl space-y-4 sm:space-y-5 max-h-[94dvh] sm:max-h-[90vh] overflow-y-auto"
             >
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-[#E8EDE0]">
@@ -1100,7 +1101,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
               </div>
 
               {/* Status Row */}
-              <div className="flex items-center justify-between bg-[#FAFAF7] p-3 rounded-xl border border-[#D4DFC8]">
+              <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-2 bg-[#FAFAF7] p-3 rounded-xl border border-[#D4DFC8]">
                 <div className="flex items-center space-x-2">
                   <span className="text-xs font-semibold text-[#5A6B5A]">Konektivitas:</span>
                   {isOnline(selectedDeviceDetail) ? (
@@ -1133,7 +1134,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
               </div>
 
               {/* Detail Info Grid */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="grid grid-cols-1 xs:grid-cols-2 gap-2.5 sm:gap-3 text-xs">
                 <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0]">
                   <span className="text-[#8A9B7A] block font-medium">UID Pemilik</span>
                   <span className="font-mono font-bold text-[#2D3B2D] mt-0.5 block">
@@ -1148,7 +1149,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] col-span-2">
+                <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] xs:col-span-2">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[#8A9B7A] font-medium">Kode Autentikasi</span>
                     {selectedDeviceDetail.auth_code && (
@@ -1184,7 +1185,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] col-span-2">
+                <div className="p-3 rounded-xl bg-[#FAFAF7] border border-[#E8EDE0] xs:col-span-2">
                   <span className="text-[#8A9B7A] block font-medium">Terakhir Aktif</span>
                   <span className="font-mono font-medium text-[#2D3B2D] mt-0.5 block">
                     {formatWibFull(selectedDeviceDetail.last_seen)}
@@ -1194,7 +1195,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
 
               {/* Pengujian lampu perangkat */}
               <div className="bg-emerald-50/70 border-2 border-emerald-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center space-x-2">
                     <Lightbulb className="w-4 h-4 text-emerald-700" />
                     <h4 className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
@@ -1203,7 +1204,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   </div>
                   
                   {/* Pin Selection Tabs */}
-                  <div className="flex items-center space-x-1 bg-white/90 p-1 rounded-xl border border-emerald-300 text-[11px] font-bold">
+                  <div className="grid grid-cols-2 bg-white/90 p-1 rounded-xl border border-emerald-300 text-[11px] font-bold w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setTestLedGpio(4)}
@@ -1234,7 +1235,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => handleLedControl('ON', testLedGpio, 0)}
@@ -1301,7 +1302,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
       {/* ========================================================================= */}
       <AnimatePresence>
         {showPairModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -1316,7 +1317,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative z-10 w-full max-w-md bg-white border border-[#D4DFC8] rounded-2xl p-6 shadow-2xl space-y-5"
+              className="relative z-10 w-full max-w-md bg-white border border-[#D4DFC8] rounded-t-2xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl space-y-5 max-h-[94dvh] overflow-y-auto"
             >
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-[#E8EDE0]">

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import crypto from 'crypto';
 import { pool } from '../db.js';
 import { sendWaMessage, normalizePhoneAndJid, getWaStatus } from '../services/waBot.js';
-import { sendBlinkToDevice, sendAuthApprovedToDevice, isDeviceSocketConnected, sendLedControlToDevice } from '../services/wsServer.js';
+import { sendBlinkToDevice, sendAuthApprovedToDevice, isDeviceSocketConnected, sendLedControlToDevice, sendRestartToDevice } from '../services/wsServer.js';
 const app = new Hono();
 // Helper to ensure user has a valid UID
 async function ensureUserUid(user) {
@@ -569,6 +569,32 @@ app.post('/users/:id/devices/:deviceId/led-control', async (c) => {
         return c.json({
             success: true,
             message: `Sinyal LED ${state} (GPIO ${gpio}) berhasil dikirim ke ${dev.name || identifier} via WebSocket!`,
+        });
+    }
+    catch (err) {
+        return c.json({ success: false, error: err.message }, 500);
+    }
+});
+// POST /api/auth/users/:id/devices/:deviceId/restart
+app.post('/users/:id/devices/:deviceId/restart', async (c) => {
+    try {
+        const userId = c.req.param('id');
+        const deviceId = c.req.param('deviceId');
+        const [devices] = await pool.query('SELECT * FROM devices WHERE id = ? AND (user_id = ? OR user_id IS NULL)', [deviceId, userId]);
+        if (devices.length === 0) {
+            return c.json({ success: false, message: 'Perangkat tidak ditemukan.' }, 404);
+        }
+        const dev = devices[0];
+        if (!sendRestartToDevice(dev.device_code, dev.serial_code)) {
+            return c.json({
+                success: false,
+                is_offline: true,
+                message: `Perangkat ESP32 (${dev.name || dev.device_code}) sedang offline.`,
+            }, 400);
+        }
+        return c.json({
+            success: true,
+            message: `Perintah reboot berhasil dikirim ke ${dev.name || dev.device_code}.`,
         });
     }
     catch (err) {
