@@ -347,7 +347,7 @@ Anda sekarang memiliki wewenang penuh untuk memonitor & mengontrol perangkat ESP
                         cmd === '3' || cmd === 'jadwal' || cmd === 'jadwal hari ini' || cmd === '!jadwal' ||
                         cmd === '4' || cmd === 'tanaman' || cmd === 'penanaman' || cmd === 'data penanaman' ||
                         cmd === '5' || cmd === 'valve' || cmd === 'status valve' ||
-                        cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve' ||
+                        cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve' || cmd === 'auto' ||
                         cmd.startsWith('on ') || cmd.startsWith('off '))) {
                         replyText = `⚠️ *Perangkat ESP32 Belum Terdaftar* (User: ${userName} | ${userUid})
 
@@ -521,46 +521,78 @@ Status        : Aktif`;
                         replyText += `Mode Sistem     : AUTO`;
                     }
                     // Menu 6: MODE DEMO & MANUAL CONTROL
-                    else if (cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve') {
+                    else if (cmd === '6' || cmd === 'demo' || cmd === 'mode demo' || cmd === 'manual' || cmd === 'manual control' || cmd === 'test' || cmd === 'test valve') {
+                        const controlDevice = userDevices.find((d) => isDeviceSocketConnected(d.device_code, d.serial_code)) || primaryDevice;
+                        const [manualValves] = await pool.query(`SELECT id, name, gpio, description
+               FROM valves
+               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
+               ORDER BY (device_id = ?) DESC, name ASC, id ASC`, [controlDevice.id, controlDevice.id]);
+                        await pool.query('UPDATE devices SET mode = ? WHERE id = ? AND user_id = ?', ['MANUAL', controlDevice.id, userId]);
+                        const valveList = manualValves.length > 0
+                            ? manualValves.map((v, index) => `${index + 1}. *${v.name}*\n   GPIO ${v.gpio || '-'}${v.description ? ` — ${v.description}` : ''}`).join('\n')
+                            : 'Belum ada valve aktif yang terhubung ke perangkat ini.';
                         replyText = `🧪 *MODE DEMO & MANUAL CONTROL* (${userUid})
+Perangkat : ${controlDevice.name || controlDevice.device_code}
+Mode      : MANUAL
+Koneksi   : ${isDeviceSocketConnected(controlDevice.device_code, controlDevice.serial_code) ? '🟢 ONLINE' : '🔴 OFFLINE'}
+
 Pengujian manual buka & tutup solenoid valve secara realtime ke mikrokontroler ESP32.
 
-Pilih Valve:
-1. Valve 1 (Zona A)
-2. Valve 2 (Zona B)
+*Daftar Valve dari Database:*
+${valveList}
 
-Pilih Durasi:
-1. 5 detik
-2. 10 detik
-3. 30 detik
-4. Tutup Valve
+*Perintah:*
+• *ON [nomor] 5* — buka 5 detik
+• *ON [nomor] 10* — buka 10 detik
+• *ON [nomor] 30* — buka 30 detik
+• *OFF [nomor]* — tutup sekarang
+• *AUTO* — kembali ke mode otomatis
 
-Ketik nomor valve & durasi (contoh: *ON 1 10* untuk Buka Valve 1 selama 10 detik atau *OFF 1* untuk Tutup Valve).`;
+Contoh: *ON 1 10* untuk membuka ${manualValves[0]?.name || 'valve nomor 1'} selama 10 detik.`;
+                    }
+                    // Return device to automatic schedule mode
+                    else if (cmd === 'auto' || cmd === 'mode auto') {
+                        await pool.query('UPDATE devices SET mode = ? WHERE id = ? AND user_id = ?', ['AUTO', primaryDevice.id, userId]);
+                        replyText = `✅ *MODE OTOMATIS DIAKTIFKAN* (${userUid})\n${primaryDevice.name || primaryDevice.device_code} kembali menjalankan jadwal fertigasi otomatis.`;
                     }
                     // Handle ON/OFF Test Valve Manual Commands (e.g. ON 1 10, OFF 1)
                     else if (cmd.startsWith('on ') || cmd.startsWith('off ')) {
-                        const parts = cmd.split(' ');
+                        const parts = cmd.split(/\s+/);
                         const action = parts[0].toUpperCase();
-                        const valveNum = parts[1] || '1';
-                        const durationSec = parts[2] ? parseInt(parts[2], 10) : 10;
-                        const [valves] = await pool.query('SELECT * FROM valves ORDER BY id ASC LIMIT 2');
-                        const valve = valves[parseInt(valveNum, 10) - 1] || valves[0];
-                        const [devices] = await pool.query('SELECT * FROM devices WHERE (user_id = ? OR user_id IS NULL) ORDER BY (user_id = ?) DESC LIMIT 1', [userId, userId]);
-                        const dev = devices[0];
-                        const deviceId = dev?.id || 1;
-                        const deviceCode = dev?.device_code || 'ESP-FERTIGASI-01';
-                        if (valve) {
-                            const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
-                            const [insRes] = await pool.query('INSERT INTO device_commands (user_id, device_id, valve_id, command, duration_seconds, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [userId, deviceId, valve.id, action === 'ON' ? 'OPEN' : 'CLOSE', action === 'ON' ? durationSec : 0, 'pending', nowStr]);
-                            // Push instantly via WebSocket to ESP32
-                            const cmdId = insRes.insertId;
-                            sendValveCommandToDevice(deviceCode, undefined, cmdId, valve.gpio || (valveNum === '2' ? 26 : 25), action === 'ON' ? 'OPEN' : 'CLOSE', durationSec);
-                            replyText = action === 'ON'
-                                ? `✅ *Perintah Terkirim ke ESP32!* (UID: ${userUid})\nMembuka ${valve.name} selama ${durationSec} detik.`
-                                : `🛑 *Perintah Terkirim ke ESP32!* (UID: ${userUid})\nMenutup ${valve.name}.`;
+                        const valveNumber = Number.parseInt(parts[1] || '', 10);
+                        const requestedDuration = parts[2] ? Number.parseInt(parts[2], 10) : 10;
+                        const durationSec = action === 'OFF' ? 0 : requestedDuration;
+                        const allowedDurations = [5, 10, 30];
+                        const controlDevice = userDevices.find((d) => isDeviceSocketConnected(d.device_code, d.serial_code)) || primaryDevice;
+                        const [valves] = await pool.query(`SELECT id, name, gpio, description
+               FROM valves
+               WHERE is_active = 1 AND (device_id = ? OR device_id IS NULL)
+               ORDER BY (device_id = ?) DESC, name ASC, id ASC`, [controlDevice.id, controlDevice.id]);
+                        const valve = Number.isInteger(valveNumber) && valveNumber >= 1 ? valves[valveNumber - 1] : null;
+                        if (!valve) {
+                            replyText = `⚠️ Nomor valve tidak valid. Pilih nomor 1-${valves.length || 0}. Ketik *TEST VALVE* untuk melihat daftar terbaru.`;
+                        }
+                        else if (action === 'ON' && !allowedDurations.includes(durationSec)) {
+                            replyText = `⚠️ Durasi tidak valid. Gunakan 5, 10, atau 30 detik. Contoh: *ON ${valveNumber} 10*.`;
+                        }
+                        else if (!isDeviceSocketConnected(controlDevice.device_code, controlDevice.serial_code)) {
+                            replyText = `🔴 *PERANGKAT OFFLINE*\nPerintah tidak dikirim karena ${controlDevice.name || controlDevice.device_code} belum terhubung ke WebSocket.`;
                         }
                         else {
-                            replyText = `⚠️ Valve tidak ditemukan. Ketik *TEST VALVE* untuk petunjuk.`;
+                            const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+                            const [insRes] = await pool.query('INSERT INTO device_commands (user_id, device_id, valve_id, command, duration_seconds, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [userId, controlDevice.id, valve.id, action === 'ON' ? 'OPEN' : 'CLOSE', durationSec, 'running', nowStr]);
+                            const cmdId = insRes.insertId;
+                            const sent = sendValveCommandToDevice(controlDevice.device_code, controlDevice.serial_code, cmdId, Number(valve.gpio), action === 'ON' ? 'OPEN' : 'CLOSE', durationSec);
+                            if (!sent) {
+                                await pool.query("UPDATE device_commands SET status = 'failed', completed_at = NOW(), message = ? WHERE id = ?", ['WebSocket perangkat tidak tersedia.', cmdId]);
+                                replyText = `❌ Perintah gagal dikirim karena koneksi WebSocket perangkat terputus.`;
+                            }
+                            else {
+                                await pool.query('UPDATE devices SET mode = ? WHERE id = ?', ['MANUAL', controlDevice.id]);
+                                replyText = action === 'ON'
+                                    ? `✅ *VALVE DIBUKA* (${userUid})\n${valve.name} — GPIO ${valve.gpio} dibuka selama ${durationSec} detik.`
+                                    : `🛑 *VALVE DITUTUP* (${userUid})\n${valve.name} — GPIO ${valve.gpio} ditutup sekarang.`;
+                            }
                         }
                     }
                     // Menu 7 / MENU / BANTUAN / HELP / Default
