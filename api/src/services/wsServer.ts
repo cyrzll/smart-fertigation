@@ -30,6 +30,104 @@ let telemetryAlertHandler: ((event: TelemetryAlertEvent) => Promise<void>) | nul
 
 let wss: WebSocketServer | null = null;
 let pingIntervalStarted = false;
+let fertigationSchedulerStarted = false;
+let fertigationSchedulerRunning = false;
+const executedScheduleSlots = new Map<string, number>();
+
+function jakartaDateTimeParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    time: `${values.hour}:${values.minute}`,
+  };
+}
+
+async function runFertigationScheduler() {
+  if (fertigationSchedulerRunning) return;
+  fertigationSchedulerRunning = true;
+
+  try {
+    const now = jakartaDateTimeParts();
+    const [rows]: any = await pool.query(`
+      SELECT fs.id, fs.valve_id, fs.duration_seconds, v.gpio, v.device_id,
+             d.device_code, d.serial_code
+      FROM plantings p
+      JOIN fertigation_profiles fp
+        ON fp.id = COALESCE(
+          p.fertigation_profile_id,
+          (SELECT id FROM fertigation_profiles WHERE is_active = 1 ORDER BY name ASC, id ASC LIMIT 1)
+        )
+      JOIN fertigation_schedules fs ON fs.fertigation_profile_id = fp.id
+      JOIN valves v ON v.id = fs.valve_id AND v.is_active = 1
+      LEFT JOIN devices d ON d.id = v.device_id AND d.is_active = 1
+      WHERE p.is_active = 1
+        AND fs.is_active = 1
+        AND fs.hst_start <= DATEDIFF(?, p.planting_date)
+        AND fs.hst_end >= DATEDIFF(?, p.planting_date)
+        AND TIME_FORMAT(fs.start_time, '%H:%i') = ?
+    `, [now.date, now.date, now.time]);
+
+    for (const schedule of rows) {
+      const slotKey = `${schedule.id}:${now.date}:${now.time}`;
+      if (executedScheduleSlots.has(slotKey)) continue;
+
+      const target = schedule.device_code || schedule.serial_code
+        ? findDeviceSocket(schedule.device_code, schedule.serial_code)
+        : (getOnlyConnectedDeviceCode() ? findDeviceSocket(getOnlyConnectedDeviceCode()!) : null);
+
+      if (!target) {
+        console.warn(`[Scheduler] Jadwal #${schedule.id} jatuh tempo, tetapi perangkat tidak online.`);
+        continue;
+      }
+
+      const [commandResult]: any = await pool.query(`
+        INSERT INTO device_commands
+          (device_id, valve_id, command, duration_seconds, status, started_at, created_at)
+        VALUES (
+          (SELECT id FROM devices WHERE device_code = ? LIMIT 1),
+          ?, 'OPEN', ?, 'running', NOW(), NOW()
+        )
+      `, [target.telemetryDeviceCode || target.deviceCode, schedule.valve_id, schedule.duration_seconds]);
+
+      const sent = sendValveCommandToDevice(
+        target.deviceCode,
+        target.serialCode,
+        commandResult.insertId,
+        Number(schedule.gpio),
+        'OPEN',
+        Number(schedule.duration_seconds),
+      );
+
+      if (sent) {
+        executedScheduleSlots.set(slotKey, Date.now());
+        console.log(`[Scheduler] Jadwal #${schedule.id} dijalankan pada ${now.date} ${now.time} WIB.`);
+      } else {
+        await pool.query(
+          "UPDATE device_commands SET status = 'failed', completed_at = NOW(), message = ? WHERE id = ?",
+          ['Perangkat WebSocket tidak tersedia.', commandResult.insertId],
+        );
+      }
+    }
+
+    const expiry = Date.now() - 2 * 60 * 60 * 1000;
+    for (const [key, timestamp] of executedScheduleSlots) {
+      if (timestamp < expiry) executedScheduleSlots.delete(key);
+    }
+  } catch (err: any) {
+    console.error('[Scheduler] Gagal memproses jadwal fertigasi:', err.message);
+  } finally {
+    fertigationSchedulerRunning = false;
+  }
+}
 
 export function setTelemetryAlertHandler(handler: (event: TelemetryAlertEvent) => Promise<void>) {
   telemetryAlertHandler = handler;
@@ -105,6 +203,13 @@ export function initWebSocketServer(server: HttpServer) {
         } catch (_) {}
       }
     }, 3500);
+  }
+
+  if (!fertigationSchedulerStarted) {
+    fertigationSchedulerStarted = true;
+    setInterval(() => void runFertigationScheduler(), 10_000);
+    void runFertigationScheduler();
+    console.log('⏱️ [Scheduler] Fertigasi otomatis aktif (zona waktu Asia/Jakarta).');
   }
 
   wss.on('connection', async (ws: WebSocket, req) => {

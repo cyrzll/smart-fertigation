@@ -72,9 +72,17 @@ app.get('/', async (c) => {
     }
 
     const [plantings]: any = await pool.query(`
-      SELECT p.*, fp.name as profile_name
+      SELECT p.*,
+             COALESCE(fp.name, fallback_fp.name) as profile_name,
+             COALESCE(p.fertigation_profile_id, fallback_fp.id) as effective_profile_id
       FROM plantings p
       LEFT JOIN fertigation_profiles fp ON p.fertigation_profile_id = fp.id
+      LEFT JOIN fertigation_profiles fallback_fp ON fallback_fp.id = (
+        SELECT id FROM fertigation_profiles
+        WHERE is_active = 1
+        ORDER BY name ASC, id ASC
+        LIMIT 1
+      )
       WHERE p.is_active = 1
       LIMIT 1
     `);
@@ -95,7 +103,7 @@ app.get('/', async (c) => {
             id: planting.id,
             name: planting.name,
             planting_date: planting.planting_date,
-            fertigation_profile_id: planting.fertigation_profile_id,
+            fertigation_profile_id: planting.effective_profile_id,
             profile_name: planting.profile_name,
           }
         : null,

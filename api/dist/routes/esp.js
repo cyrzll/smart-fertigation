@@ -7,7 +7,10 @@ app.get('/fertigation/schedule', async (c) => {
         const [plantings] = await pool.query(`
       SELECT p.*, fp.name as profile_name
       FROM plantings p
-      JOIN fertigation_profiles fp ON p.fertigation_profile_id = fp.id
+      JOIN fertigation_profiles fp ON fp.id = COALESCE(
+        p.fertigation_profile_id,
+        (SELECT id FROM fertigation_profiles WHERE is_active = 1 ORDER BY name ASC, id ASC LIMIT 1)
+      )
       WHERE p.is_active = 1
       LIMIT 1
     `);
