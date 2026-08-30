@@ -8,12 +8,11 @@ import {
   HelpCircle,
   Sliders,
 } from 'lucide-react';
-import { bleService } from './services/bleService';
-import { Navbar } from './components/Navbar';
-import { DeviceOverview } from './components/DeviceOverview';
-import { WifiManager } from './components/WifiManager';
-import { BleConsole } from './components/BleConsole';
-import { ToastContainer } from './components/Toast';
+import { bleService } from '../../services/bleService';
+import { DeviceOverview } from './DeviceOverview';
+import { WifiManager } from './WifiManager';
+import { BleConsole } from './BleConsole';
+import { ToastContainer } from './Toast';
 
 export function App({ embedded = false }) {
   const [isConnected, setIsConnected] = useState(false);
@@ -335,18 +334,6 @@ export function App({ embedded = false }) {
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {/* Top Navbar */}
-      {!embedded && (
-        <Navbar
-          isConnected={isConnected}
-          isConnecting={isConnecting}
-          deviceName={deviceName}
-          onConnect={handleConnect}
-          onDisconnect={handleDisconnect}
-          isSupported={isSupported}
-          onRefresh={handleRefreshStatus}
-        />
-      )}
-
       {embedded && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
           <div>

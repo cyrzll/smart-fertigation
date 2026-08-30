@@ -11,7 +11,7 @@ import { actions } from 'astro:actions';
 import api from '../lib/axios';
 import { goeyToast } from 'goey-toast';
 import { ConfirmModal } from './ConfirmModal';
-import { App as EspBluetoothManager } from '../../../esp/apps/src/App.jsx';
+import { App as EspBluetoothManager } from './esp/BleDeviceManager.jsx';
 
 const formatWibFull = (dateStr) => {
   if (!dateStr) return '-';
