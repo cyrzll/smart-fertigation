@@ -3,6 +3,31 @@ import { pool } from '../db.js';
 
 const app = new Hono();
 
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
+
+function jakartaDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function calculateHst(plantingDate: unknown) {
+  const planted = String(plantingDate).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planted)) return null;
+
+  const toUtcDay = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+
+  return Math.max(0, Math.floor((toUtcDay(jakartaDateParts()) - toUtcDay(planted)) / 86_400_000));
+}
+
 app.get('/', async (c) => {
   try {
     const profileIdQuery = c.req.query('profile_id');
@@ -56,15 +81,7 @@ app.get('/', async (c) => {
 
     const planting = plantings.length > 0 ? plantings[0] : null;
     let hst: number | null = null;
-    if (planting && planting.planting_date) {
-      const pDate = new Date(planting.planting_date);
-      const today = new Date();
-      pDate.setHours(0, 0, 0, 0);
-      today.setHours(0, 0, 0, 0);
-      const diffTime = today.getTime() - pDate.getTime();
-      hst = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      if (hst < 0) hst = 0;
-    }
+    if (planting && planting.planting_date) hst = calculateHst(planting.planting_date);
 
     return c.json({
       success: true,
@@ -98,9 +115,15 @@ app.post('/', async (c) => {
     const vId = parseInt(valve_id, 10);
     const hStart = parseInt(hst_start !== undefined ? hst_start : 0, 10);
     const hEnd = parseInt(hst_end !== undefined ? hst_end : 99, 10);
-    const durMins = parseInt(duration_minutes || 5, 10);
+    const durMins = parseInt(duration_minutes, 10);
 
-    if (isNaN(profileId) || isNaN(vId) || isNaN(hStart) || isNaN(hEnd) || isNaN(durMins) || !start_time) {
+    if (
+      !Number.isInteger(profileId) || !Number.isInteger(vId) ||
+      !Number.isInteger(hStart) || !Number.isInteger(hEnd) ||
+      !Number.isInteger(durMins) || hStart < 0 || hEnd < hStart || hEnd > 365 ||
+      durMins < 1 || durMins > 1440 || typeof start_time !== 'string' ||
+      !TIME_PATTERN.test(start_time)
+    ) {
       return c.json({ success: false, message: 'Data jadwal tidak valid atau tidak lengkap.' }, 400);
     }
 
@@ -114,9 +137,9 @@ app.post('/', async (c) => {
     }
 
     const [res]: any = await pool.query(
-      `INSERT INTO fertigation_schedules (fertigation_profile_id, valve_id, growth_phase_id, hst, hst_start, hst_end, start_time, duration_seconds, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [profileId, vId, validPhaseId, hStart, hStart, hEnd, formattedStartTime, duration_seconds]
+      `INSERT INTO fertigation_schedules (fertigation_profile_id, valve_id, growth_phase_id, hst_start, hst_end, start_time, duration_seconds, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+      [profileId, vId, validPhaseId, hStart, hEnd, formattedStartTime, duration_seconds]
     );
 
     return c.json({ success: true, message: 'Jadwal berhasil ditambahkan.', id: res.insertId });
@@ -136,9 +159,15 @@ app.put('/:id', async (c) => {
     const vId = parseInt(valve_id, 10);
     const hStart = parseInt(hst_start !== undefined ? hst_start : 0, 10);
     const hEnd = parseInt(hst_end !== undefined ? hst_end : 99, 10);
-    const durMins = parseInt(duration_minutes || 5, 10);
+    const durMins = parseInt(duration_minutes, 10);
 
-    if (isNaN(profileId) || isNaN(vId) || isNaN(hStart) || isNaN(hEnd) || isNaN(durMins) || !start_time) {
+    if (
+      !Number.isInteger(profileId) || !Number.isInteger(vId) ||
+      !Number.isInteger(hStart) || !Number.isInteger(hEnd) ||
+      !Number.isInteger(durMins) || hStart < 0 || hEnd < hStart || hEnd > 365 ||
+      durMins < 1 || durMins > 1440 || typeof start_time !== 'string' ||
+      !TIME_PATTERN.test(start_time)
+    ) {
       return c.json({ success: false, message: 'Data jadwal tidak valid atau tidak lengkap.' }, 400);
     }
 
@@ -153,9 +182,9 @@ app.put('/:id', async (c) => {
 
     await pool.query(
       `UPDATE fertigation_schedules
-       SET fertigation_profile_id = ?, valve_id = ?, growth_phase_id = ?, hst = ?, hst_start = ?, hst_end = ?, start_time = ?, duration_seconds = ?
+       SET fertigation_profile_id = ?, valve_id = ?, growth_phase_id = ?, hst_start = ?, hst_end = ?, start_time = ?, duration_seconds = ?
        WHERE id = ?`,
-      [profileId, vId, validPhaseId, hStart, hStart, hEnd, formattedStartTime, duration_seconds, id]
+      [profileId, vId, validPhaseId, hStart, hEnd, formattedStartTime, duration_seconds, id]
     );
 
     return c.json({ success: true, message: 'Jadwal berhasil diperbarui.' });
