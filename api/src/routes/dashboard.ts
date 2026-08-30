@@ -3,12 +3,30 @@ import { pool } from '../db.js';
 
 const app = new Hono();
 
+function jakartaDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 app.get('/', async (c) => {
   try {
     const [plantings]: any = await pool.query(`
-      SELECT p.*, fp.name as profile_name
+      SELECT p.*,
+             COALESCE(fp.id, fallback_fp.id) AS effective_profile_id,
+             COALESCE(fp.name, fallback_fp.name) AS profile_name,
+             COALESCE(fp.description, fallback_fp.description) AS profile_description,
+             COALESCE(fp.is_active, fallback_fp.is_active) AS profile_is_active
       FROM plantings p
       LEFT JOIN fertigation_profiles fp ON p.fertigation_profile_id = fp.id
+      LEFT JOIN fertigation_profiles fallback_fp ON fallback_fp.id = (
+        SELECT id FROM fertigation_profiles
+        WHERE is_active = 1
+        ORDER BY name ASC, id ASC
+        LIMIT 1
+      )
       WHERE p.is_active = 1
       LIMIT 1
     `);
@@ -18,25 +36,40 @@ app.get('/', async (c) => {
     let todaySchedules: any[] = [];
 
     if (planting && planting.planting_date) {
-      const pDate = new Date(planting.planting_date);
-      const today = new Date();
-      pDate.setHours(0, 0, 0, 0);
-      today.setHours(0, 0, 0, 0);
-      const diffTime = today.getTime() - pDate.getTime();
-      hst = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      if (hst < 0) hst = 0;
+      const [hstResult]: any = await pool.query(
+        'SELECT GREATEST(0, DATEDIFF(?, ?)) AS hst',
+        [jakartaDate(), planting.planting_date],
+      );
+      hst = Number(hstResult[0]?.hst || 0);
 
-      if (planting.fertigation_profile_id) {
+      if (planting.effective_profile_id) {
         const [schedules]: any = await pool.query(
           `SELECT fs.*, v.name as valve_name, v.gpio
            FROM fertigation_schedules fs
            JOIN valves v ON fs.valve_id = v.id
-           WHERE fs.fertigation_profile_id = ? AND fs.hst = ? AND fs.is_active = 1
+           WHERE fs.fertigation_profile_id = ?
+             AND fs.hst_start <= ? AND fs.hst_end >= ?
+             AND fs.is_active = 1
            ORDER BY fs.start_time ASC`,
-          [planting.fertigation_profile_id, hst]
+          [planting.effective_profile_id, hst, hst]
         );
         todaySchedules = schedules;
       }
+    }
+
+    let activeProfile = null;
+    if (planting?.effective_profile_id) {
+      const [profileRows]: any = await pool.query(
+        `SELECT fp.id, fp.name, fp.description, fp.is_active,
+                COUNT(fs.id) AS schedule_count
+         FROM fertigation_profiles fp
+         LEFT JOIN fertigation_schedules fs
+           ON fs.fertigation_profile_id = fp.id AND fs.is_active = 1
+         WHERE fp.id = ?
+         GROUP BY fp.id, fp.name, fp.description, fp.is_active`,
+        [planting.effective_profile_id],
+      );
+      activeProfile = profileRows[0] || null;
     }
 
     const [valvesCountRes]: any = await pool.query(
@@ -86,11 +119,12 @@ app.get('/', async (c) => {
             id: planting.id,
             name: planting.name,
             planting_date: planting.planting_date,
-            fertigation_profile_id: planting.fertigation_profile_id,
+            fertigation_profile_id: planting.effective_profile_id,
             profile_name: planting.profile_name,
           }
         : null,
       hst,
+      activeProfile,
       valveCount,
       todaySchedules,
       latestTelemetry,
