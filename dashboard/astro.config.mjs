@@ -10,6 +10,11 @@ export default defineConfig({
   adapter: node({
     mode: 'standalone',
   }),
+  security: {
+    // The public origin is validated in middleware. Astro's built-in check
+    // sees the internal reverse-proxy URL and rejects valid same-site calls.
+    checkOrigin: false,
+  },
   integrations: [react()],
   vite: {
     plugins: [tailwindcss()],
