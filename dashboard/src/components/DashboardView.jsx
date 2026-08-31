@@ -175,7 +175,7 @@ const HourlyComparisonChart = ({ rows }) => {
   );
 };
 
-export const DashboardView = ({ apiUrl, setActiveTab }) => {
+export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -371,7 +371,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
       className="space-y-6"
     >
       {/* Header Dashboard */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 transition-opacity duration-300 ${sensorsEnabled ? 'opacity-100' : 'opacity-45'}`}>
         <div>
           <h2 className="text-xl font-bold text-[#2D3B2D]">Dashboard Monitoring</h2>
           <p className="text-xs text-[#8A9B7A] mt-0.5">
@@ -389,7 +389,7 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
 
           <button
             onClick={() => fetchDashboardData(true)}
-            disabled={loading}
+            disabled={loading || !sensorsEnabled}
             className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl border border-[#C8D9B0] text-[#5A6B5A] hover:border-[#7BAF5A] hover:text-[#3A6B2A] text-xs font-semibold bg-white transition shadow-xs cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -410,7 +410,13 @@ export const DashboardView = ({ apiUrl, setActiveTab }) => {
       {/* ========================================================================= */}
       {/* REAL-TIME SENSOR TELEMETRY (pH AIR & TDS NUTRISI)                         */}
       {/* ========================================================================= */}
-      <div>
+      <div className={`relative transition-opacity duration-300 ${sensorsEnabled ? 'opacity-100' : 'opacity-45'}`} aria-disabled={!sensorsEnabled}>
+        {!sensorsEnabled && (
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500 opacity-100">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>Monitoring sensor sedang dinonaktifkan melalui Pengaturan.</span>
+          </div>
+        )}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
             <Activity className="w-4 h-4 text-[#7BAF5A]" />

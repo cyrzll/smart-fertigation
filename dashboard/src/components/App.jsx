@@ -25,6 +25,7 @@ export const App = () => {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userDevices, setUserDevices] = useState([]);
   const [loadingUserDevices, setLoadingUserDevices] = useState(false);
+  const [sensorsEnabled, setSensorsEnabled] = useState(true);
 
   const apiUrl = import.meta.env.PUBLIC_API_URL || '';
 
@@ -56,6 +57,19 @@ export const App = () => {
       fetchUserDevices(user.id);
     }
   }, [user?.id, user?.level, activeTab]);
+
+  useEffect(() => {
+    if (!user?.id || typeof window === 'undefined') return;
+    const storedValue = localStorage.getItem(`sensor_monitoring_enabled:${user.id}`);
+    setSensorsEnabled(storedValue !== 'false');
+  }, [user?.id]);
+
+  const handleSensorsEnabledChange = (enabled) => {
+    setSensorsEnabled(enabled);
+    if (user?.id && typeof window !== 'undefined') {
+      localStorage.setItem(`sensor_monitoring_enabled:${user.id}`, String(enabled));
+    }
+  };
 
   // Helper to sync tab with current URL pathname
   const syncRouteFromPath = (currentUser) => {
@@ -252,8 +266,8 @@ export const App = () => {
             </div>
           )}
 
-          {activeTab === 'dashboard' && user?.level !== 'admin' && <DashboardView apiUrl={apiUrl} setActiveTab={handleSelectTab} hasDevice={hasVerifiedDevice} />}
-          {activeTab === 'devices' && <UserSettingsView defaultTab="devices" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} />}
+          {activeTab === 'dashboard' && user?.level !== 'admin' && <DashboardView apiUrl={apiUrl} setActiveTab={handleSelectTab} hasDevice={hasVerifiedDevice} sensorsEnabled={sensorsEnabled} />}
+          {activeTab === 'devices' && <UserSettingsView defaultTab="devices" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} sensorsEnabled={sensorsEnabled} onSensorsEnabledChange={handleSensorsEnabledChange} />}
           {activeTab === 'schedules' && <SchedulesView apiUrl={apiUrl} />}
           {activeTab === 'phases' && <GrowthPhasesView apiUrl={apiUrl} />}
           {activeTab === 'demo' && <DemoView apiUrl={apiUrl} />}
@@ -261,7 +275,7 @@ export const App = () => {
           {activeTab === 'valves' && <ValvesView apiUrl={apiUrl} />}
           {activeTab === 'plantings' && <PlantingsView apiUrl={apiUrl} />}
           {activeTab === 'wa' && <WaBotView apiUrl={apiUrl} />}
-          {activeTab === 'settings' && <UserSettingsView defaultTab="settings" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} />}
+          {activeTab === 'settings' && <UserSettingsView defaultTab="settings" apiUrl={apiUrl} user={user} onUpdateUser={(u) => setUser(u)} sensorsEnabled={sensorsEnabled} onSensorsEnabledChange={handleSensorsEnabledChange} />}
           {activeTab === 'users' && user?.level === 'admin' && <UsersView apiUrl={apiUrl} />}
           {(activeTab === 'admin' || user?.level === 'admin') && user?.level === 'admin' ? (
             <AdminCenterView

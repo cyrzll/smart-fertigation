@@ -31,7 +31,7 @@ const formatWibFull = (dateStr) => {
   }
 };
 
-export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' }) => {
+export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices', sensorsEnabled = true, onSensorsEnabledChange }) => {
   const currentUser = user || {};
   const [activeSubTab, setActiveSubTab] = useState(defaultTab);
 
@@ -709,6 +709,38 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices' })
       {/* View 1: Profile Form & Multi-WhatsApp */}
       {activeSubTab === 'settings' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="lg:col-span-2 bg-white border border-[#D4DFC8] rounded-xl p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-start space-x-3">
+                <div className={`p-2.5 rounded-xl border ${sensorsEnabled ? 'bg-[#E8F2DF] border-[#C8D9B0] text-[#5A8A3A]' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#2D3B2D]">Monitoring Sensor</h3>
+                  <p className="text-xs text-[#8A9B7A] mt-1 leading-relaxed">
+                    Aktifkan tampilan telemetri pH dan TDS pada Dashboard Monitoring.
+                  </p>
+                  <p className={`text-[11px] font-semibold mt-1.5 ${sensorsEnabled ? 'text-[#5A8A3A]' : 'text-slate-500'}`}>
+                    {sensorsEnabled ? 'Sensor aktif' : 'Sensor dinonaktifkan — data pada dashboard akan diredupkan'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={sensorsEnabled}
+                aria-label="Aktifkan monitoring sensor"
+                onClick={() => onSensorsEnabledChange?.(!sensorsEnabled)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#7BAF5A]/40 focus:ring-offset-2 ${
+                  sensorsEnabled ? 'bg-[#7BAF5A] border-[#689849]' : 'bg-slate-200 border-slate-300'
+                }`}
+              >
+                <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${sensorsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+          </div>
+
           {/* Left: Profile Form */}
           <div className="bg-white border border-[#D4DFC8] rounded-xl p-5 space-y-4">
             <div className="flex items-center space-x-2.5 pb-3 border-b border-[#E8EDE0]">
