@@ -94,6 +94,7 @@ export function FirmwareUpdater({ status, updateInfo, isChecking, otaState, onCh
           <li>Jangan mematikan daya selama penulisan firmware.</li>
           <li>Valve akan ditutup dan perangkat reboot setelah berhasil.</li>
           <li>Bluetooth akan terputus saat perangkat reboot.</li>
+          <li>Bluetooth juga dihentikan selama download HTTPS untuk menyediakan RAM; hubungkan kembali setelah ESP reboot.</li>
         </ul>
       </aside>
     </div>

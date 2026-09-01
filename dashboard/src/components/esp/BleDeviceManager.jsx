@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bluetooth,
   Wifi,
@@ -64,6 +64,11 @@ export function App({ embedded = false }) {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [otaState, setOtaState] = useState({ updating: false, progress: 0, message: '' });
+  const otaUpdatingRef = useRef(false);
+
+  useEffect(() => {
+    otaUpdatingRef.current = otaState.updating;
+  }, [otaState.updating]);
 
   // Toast Notifications
   const [toasts, setToasts] = useState([]);
@@ -91,7 +96,10 @@ export function App({ embedded = false }) {
       } else {
         setIsConnected(false);
         setDeviceName('');
-        if (data.error) {
+        if (otaUpdatingRef.current) {
+          setOtaState((prev) => ({ ...prev, progress: Math.max(prev.progress, 5), message: 'ESP32 sedang mengunduh firmware; Bluetooth dihentikan sementara...' }));
+          addToast('warning', 'Bluetooth sengaja diputus agar RAM cukup untuk download HTTPS. Tunggu ESP reboot, lalu hubungkan kembali.', 'OTA Sedang Berjalan');
+        } else if (data.error) {
           addToast('error', data.error, 'Koneksi Gagal');
         } else {
           addToast('info', 'Koneksi Bluetooth dengan ESP32 terputus.', 'Perangkat Terputus');

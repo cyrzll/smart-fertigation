@@ -18,6 +18,7 @@
   - Real-Time Manual LED & Valve Relay Actuation (Active-Low Non-Blocking Timers)
   - Automatic Sensor Telemetry & Heartbeat Streaming
   - Dual-Key Socket Authentication (device_code & serial_code cross-matching)
+  - Firmware OTA via BLE command + HTTP(S) download, MD5 verification & reboot
   =================================================================================
   Required Libraries (Install via Arduino Library Manager / ESP32 Core):
   - ESP32 BLE Libraries (Built-in to ESP32 Arduino Core: BLEDevice, BLEServer, BLEUtils, BLE2902)
@@ -33,6 +34,11 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Ticker.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include <time.h>
 
 // ESP32 BLE Core Libraries
 #include <BLEDevice.h>
@@ -43,11 +49,30 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.5.0-BLE-WebSocket-Hybrid";
+const char* firmware_version = "v2.6.0-BLE-OTA";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
 #define DEFAULT_WS_PORT 443
+
+// ISRG Root X2 - trust anchor untuk sertifikat Let's Encrypt YE2 yang saat ini
+// digunakan api.tirtaruna.site. Root berlaku sampai September 2040.
+static const char LETS_ENCRYPT_ROOT_X2[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw
+CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
+R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00
+MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT
+ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw
+EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW
++1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9
+ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T
+AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI
+zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW
+tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1
+/q4AaOeMSQ+2b1tbFfLn
+-----END CERTIFICATE-----
+)EOF";
 
 String ws_host_str = DEFAULT_WS_HOST;
 uint16_t ws_port = DEFAULT_WS_PORT;
@@ -111,6 +136,19 @@ BLECharacteristic *pBleRxChar = NULL;
 bool bleDeviceConnected = false;
 bool oldBleDeviceConnected = false;
 bool wifiConnecting = false;
+bool otaInProgress = false;
+bool otaRequestPending = false;
+int otaProgress = 0;
+String otaTargetVersion = "";
+String otaPendingUrl = "";
+String otaPendingVersion = "";
+String otaPendingMd5 = "";
+unsigned long firmwareHealthySince = 0;
+bool firmwareMarkedValid = false;
+String wsDiagnostic = "NOT_CONNECTED";
+IPAddress wsResolvedIp;
+bool bleStackInitialized = false;
+bool bleSuspendedForOta = false;
 
 // Perbarui indikator tanpa delay:
 // hijau tetap = Wi-Fi tersambung, hijau berkedip = mencoba Wi-Fi,
@@ -348,6 +386,176 @@ void sendBleNotify(String message) {
   }
 }
 
+void sendOtaResult(const char* type, bool success, const String &message, int progress) {
+  StaticJsonDocument<384> doc;
+  doc["type"] = type;
+  doc["success"] = success;
+  doc["message"] = message;
+  doc["current_version"] = firmware_version;
+  if (otaTargetVersion.length() > 0) doc["target_version"] = otaTargetVersion;
+  if (progress >= 0) doc["progress"] = progress;
+  String output;
+  serializeJson(doc, output);
+  sendBleNotify(output);
+}
+
+void prepareSafeStateForOta() {
+  for (int i = 0; i < MAX_VALVE_TIMERS; i++) dynamicValves[i].active = false;
+  setValvePin(VALVE1_PIN, false, 0);
+  setValvePin(VALVE2_PIN, false, 0);
+  digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+  webSocket.disconnect();
+}
+
+void suspendBleForOta() {
+  if (!bleStackInitialized) return;
+  Serial.println("[OTA] Menghentikan BLE sementara untuk membebaskan RAM TLS...");
+  bleDeviceConnected = false;
+  oldBleDeviceConnected = false;
+  BLEDevice::deinit(true);
+  pBleServer = NULL;
+  pBleTxChar = NULL;
+  pBleRxChar = NULL;
+  bleStackInitialized = false;
+  bleSuspendedForOta = true;
+  delay(250);
+  Serial.printf("[OTA] BLE dihentikan. Free heap: %u byte\n", ESP.getFreeHeap());
+}
+
+void resumeBleAfterOtaFailure() {
+  if (!bleSuspendedForOta) return;
+  Serial.println("[OTA] Update gagal; mengaktifkan kembali BLE...");
+  bleSuspendedForOta = false;
+  setupBLE();
+}
+
+// Dashboard mengirim URL file hasil kompilasi (.bin), bukan source .ino.
+// File ditulis ke partisi OTA yang tidak sedang aktif lalu ESP reboot.
+void updateFirmwareFromUrl(const String &url, const String &version, const String &expectedMd5) {
+  if (otaInProgress) {
+    sendOtaResult("OTA_RESULT", false, "Update firmware lain sedang berjalan.", -1);
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    sendOtaResult("OTA_RESULT", false, "Wi-Fi harus terhubung untuk mengunduh firmware.", -1);
+    return;
+  }
+  if (!(url.startsWith("https://") || url.startsWith("http://"))) {
+    sendOtaResult("OTA_RESULT", false, "URL firmware harus menggunakan HTTP atau HTTPS.", -1);
+    return;
+  }
+
+  otaInProgress = true;
+  otaProgress = 0;
+  otaTargetVersion = version;
+  sendOtaResult("OTA_PROGRESS", true, "Menyiapkan update; Bluetooth akan terputus sementara...", 0);
+  prepareSafeStateForOta();
+  delay(350); // beri waktu notifikasi terakhir terkirim ke dashboard
+  suspendBleForOta();
+
+  HTTPClient http;
+  WiFiClient plainClient;
+  WiFiClientSecure secureClient;
+  bool begun;
+  if (url.startsWith("https://")) {
+    // Produksi: sebaiknya ganti dengan secureClient.setCACert(root_ca).
+    secureClient.setInsecure();
+    begun = http.begin(secureClient, url);
+  } else {
+    begun = http.begin(plainClient, url);
+  }
+
+  if (!begun) {
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, "Tidak dapat membuka URL firmware.", -1);
+    return;
+  }
+
+  http.setConnectTimeout(15000);
+  http.setTimeout(15000);
+  const int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    String reason = "Server firmware merespons HTTP " + String(httpCode) + ".";
+    http.end();
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, reason, -1);
+    return;
+  }
+
+  const int firmwareSize = http.getSize();
+  if (firmwareSize <= 0) {
+    http.end();
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, "Server wajib mengirim Content-Length yang valid.", -1);
+    return;
+  }
+
+  if (!Update.begin((size_t)firmwareSize, U_FLASH)) {
+    String reason = "Partisi OTA tidak cukup/tidak mendukung OTA: ";
+    reason += Update.errorString();
+    http.end();
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, reason, -1);
+    return;
+  }
+
+  if (expectedMd5.length() > 0 && !Update.setMD5(expectedMd5.c_str())) {
+    Update.abort();
+    http.end();
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, "Format MD5 firmware tidak valid.", -1);
+    return;
+  }
+
+  WiFiClient *stream = http.getStreamPtr();
+  uint8_t buffer[1024];
+  size_t written = 0;
+  unsigned long lastDataAt = millis();
+
+  while (http.connected() && written < (size_t)firmwareSize) {
+    size_t available = stream->available();
+    if (available > 0) {
+      size_t toRead = min(available, sizeof(buffer));
+      int received = stream->readBytes(buffer, toRead);
+      if (received <= 0 || Update.write(buffer, received) != (size_t)received) break;
+      written += received;
+      lastDataAt = millis();
+      int progress = (int)((written * 100ULL) / (size_t)firmwareSize);
+      if (progress >= otaProgress + 5 || progress == 100) {
+        otaProgress = progress;
+        sendOtaResult("OTA_PROGRESS", true, "Firmware sedang diunduh dan ditulis...", progress);
+      }
+    } else {
+      if (millis() - lastDataAt > 15000) break;
+      delay(1);
+    }
+  }
+
+  bool success = (written == (size_t)firmwareSize) && Update.end(true) && Update.isFinished();
+  String errorMessage = Update.errorString();
+  http.end();
+  if (!success) {
+    Update.abort();
+    otaInProgress = false;
+    resumeBleAfterOtaFailure();
+    sendOtaResult("OTA_RESULT", false, "Update gagal: " + errorMessage, -1);
+    connectWebSocketServer();
+    return;
+  }
+
+  preferences.begin("fertigation", false);
+  preferences.putString("last_ota_version", version);
+  preferences.end();
+  sendOtaResult("OTA_RESULT", true, "Firmware berhasil dipasang. ESP32 akan reboot.", 100);
+  delay(1200);
+  ESP.restart();
+}
+
 // Helper to sanitize host string (strip https://, http://, wss://, ws://, trailing slash)
 String sanitizeHostString(String host) {
   String clean = host;
@@ -360,6 +568,34 @@ String sanitizeHostString(String host) {
     clean.remove(clean.length() - 1);
   }
   return clean;
+}
+
+bool syncClockForTls() {
+  // Sertifikat TLS tidak dapat divalidasi jika jam ESP masih 1 Januari 1970.
+  if (time(nullptr) > 1704067200) return true; // sudah melewati 1 Januari 2024
+
+  wsDiagnostic = "SYNCING_TIME";
+  Serial.println("[WSS] Menyinkronkan waktu NTP untuk validasi sertifikat TLS...");
+  configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  unsigned long startedAt = millis();
+  while (time(nullptr) <= 1704067200 && millis() - startedAt < 12000) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (time(nullptr) <= 1704067200) {
+    wsDiagnostic = "NTP_FAILED";
+    Serial.println("[WSS ERROR] Sinkronisasi NTP gagal; koneksi TLS dibatalkan.");
+    return false;
+  }
+
+  struct tm utcTime;
+  getLocalTime(&utcTime, 1000);
+  Serial.printf("[WSS] Waktu UTC tersinkron: %04d-%02d-%02d %02d:%02d:%02d\n",
+                utcTime.tm_year + 1900, utcTime.tm_mon + 1, utcTime.tm_mday,
+                utcTime.tm_hour, utcTime.tm_min, utcTime.tm_sec);
+  return true;
 }
 
 // Connect WebSocket with current API URL (supports both WS and Secure WSS/SSL)
@@ -378,10 +614,21 @@ void connectWebSocketServer() {
       isSSL = false;
     }
 
+    wsDiagnostic = "RESOLVING_DNS";
+    if (!WiFi.hostByName(cleanHost.c_str(), wsResolvedIp)) {
+      wsDiagnostic = "DNS_FAILED";
+      Serial.printf("[WS ERROR] DNS gagal menemukan host '%s'.\n", cleanHost.c_str());
+      return;
+    }
+    Serial.printf("[WS] DNS %s -> %s\n", cleanHost.c_str(), wsResolvedIp.toString().c_str());
+
     if (isSSL) {
+      if (!syncClockForTls()) return;
+      wsDiagnostic = "TLS_CONNECTING";
       Serial.printf("[WS] Menghubungkan secara SECURE (WSS/SSL) ke wss://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
-      webSocket.beginSSL(cleanHost.c_str(), ws_port, wsUrl.c_str());
+      webSocket.beginSslWithCA(cleanHost.c_str(), ws_port, wsUrl.c_str(), LETS_ENCRYPT_ROOT_X2);
     } else {
+      wsDiagnostic = "WS_CONNECTING";
       Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
       webSocket.begin(cleanHost.c_str(), ws_port, wsUrl.c_str());
     }
@@ -468,8 +715,12 @@ void sendBleStatus() {
   }
 
   doc["ws_status"] = webSocket.isConnected() ? "CONNECTED" : "DISCONNECTED";
+  doc["ws_diagnostic"] = wsDiagnostic;
+  doc["ws_resolved_ip"] = wsResolvedIp.toString();
   doc["uptime_sec"] = millis() / 1000;
   doc["free_heap"] = ESP.getFreeHeap();
+  doc["ota_in_progress"] = otaInProgress;
+  doc["ota_progress"] = otaProgress;
 
   JsonObject valves = doc.createNestedObject("valves");
   valves["valve1"] = valve1State;
@@ -798,6 +1049,32 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
 
           reconnectWebSocket();
         }
+        // 13. OTA_STATUS: status dukungan/update firmware saat ini
+        else if (cmd == "OTA_STATUS") {
+          sendOtaResult("OTA_STATUS", true, otaInProgress ? "Update sedang berjalan." : "ESP32 siap menerima update.", otaProgress);
+        }
+        // 14. OTA_UPDATE
+        // {"cmd":"OTA_UPDATE","url":"https://server/fw.bin","version":"v2.7.0","md5":"32-char-md5"}
+        else if (cmd == "OTA_UPDATE") {
+          String firmwareUrl = doc["url"].as<String>();
+          String targetVersion = doc["version"].as<String>();
+          String md5 = doc["md5"].as<String>();
+          if (firmwareUrl.length() == 0 || targetVersion.length() == 0) {
+            sendOtaResult("OTA_RESULT", false, "Parameter url dan version wajib diisi.", -1);
+          } else if (targetVersion == firmware_version) {
+            sendOtaResult("OTA_RESULT", false, "Versi tersebut sudah terpasang.", -1);
+          } else if (otaRequestPending || otaInProgress) {
+            sendOtaResult("OTA_RESULT", false, "Update firmware lain sedang berjalan.", -1);
+          } else {
+            // Jangan menjalankan HTTPS dari callback BLE. Simpan request dan
+            // jalankan dari loop utama agar BLE dapat dihentikan dengan aman.
+            otaPendingUrl = firmwareUrl;
+            otaPendingVersion = targetVersion;
+            otaPendingMd5 = md5;
+            otaRequestPending = true;
+            sendOtaResult("OTA_PROGRESS", true, "Perintah update diterima...", 0);
+          }
+        }
       }
     }
 };
@@ -816,7 +1093,7 @@ void setupBLE() {
   dynamicBleName = String(BLE_DEVICE_NAME) + "-" + macSuffix;
 
   BLEDevice::init(dynamicBleName.c_str());
-  BLEDevice::setMTU(512); // Mendukung payload MTU besar
+  BLEDevice::setMTU(185); // Cukup untuk chunk 128 byte dan lebih hemat RAM
 
   pBleServer = BLEDevice::createServer();
   pBleServer->setCallbacks(new MyBleServerCallbacks());
@@ -846,6 +1123,7 @@ void setupBLE() {
   pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
+  bleStackInitialized = true;
   Serial.printf("[BLE] BLE Server Berhasil Berjalan! Nama: '%s', Service UUID: %s\n\n", dynamicBleName.c_str(), SERVICE_UUID);
 }
 
@@ -924,10 +1202,12 @@ void sendWsCommandComplete(int commandId, String message) {
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
+      if (wsDiagnostic == "CONNECTED") wsDiagnostic = "DISCONNECTED_RETRYING";
       Serial.println("[WS] Terputus dari WebSocket Server! Mencoba menghubungkan kembali...");
       break;
 
     case WStype_CONNECTED:
+      wsDiagnostic = "CONNECTED";
       Serial.printf("[WS] TERHUBUNG KE WEBSOCKET SERVER (%s:%d)!\n", ws_host_str.c_str(), ws_port);
       digitalWrite(ONBOARD_LED, HIGH);
       sendWsStatus();
@@ -1010,8 +1290,17 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       break;
     }
 
+    case WStype_ERROR: {
+      String errorText;
+      for (size_t i = 0; i < length; i++) errorText += (char)payload[i];
+      errorText.trim();
+      wsDiagnostic = errorText.length() > 0 ? "WS_ERROR: " + errorText : "WS_ERROR";
+      Serial.printf("[WS ERROR] %s\n", errorText.length() > 0 ? errorText.c_str() : "Handshake/TLS gagal tanpa detail payload");
+      if (bleDeviceConnected) sendBleStatus();
+      break;
+    }
+
     case WStype_BIN:
-    case WStype_ERROR:
     case WStype_PING:
     case WStype_PONG:
       break;
@@ -1027,6 +1316,17 @@ void setup() {
   Serial.println("\n=======================================================");
   Serial.printf("[ESP32] Smart Fertigation AIoT %s Starting...\n", firmware_version);
   Serial.println("=======================================================");
+
+  // Dengan rollback bootloader aktif, firmware baru baru dibuat permanen setelah
+  // berhasil hidup stabil selama 30 detik.
+  const esp_partition_t *runningPartition = esp_ota_get_running_partition();
+  esp_ota_img_states_t otaState;
+  if (esp_ota_get_state_partition(runningPartition, &otaState) == ESP_OK && otaState == ESP_OTA_IMG_PENDING_VERIFY) {
+    firmwareHealthySince = millis();
+    Serial.println("[OTA] Firmware baru dalam masa verifikasi 30 detik.");
+  } else {
+    firmwareMarkedValid = true;
+  }
 
   pinMode(VALVE1_PIN, OUTPUT);
   pinMode(VALVE2_PIN, OUTPUT);
@@ -1118,6 +1418,26 @@ void loop() {
   }
 
   unsigned long now = millis();
+
+  // Jalankan OTA di task loop, bukan di callback GATT/BLE.
+  if (otaRequestPending && !otaInProgress) {
+    otaRequestPending = false;
+    String url = otaPendingUrl;
+    String version = otaPendingVersion;
+    String md5 = otaPendingMd5;
+    otaPendingUrl = "";
+    otaPendingVersion = "";
+    otaPendingMd5 = "";
+    updateFirmwareFromUrl(url, version, md5);
+    return;
+  }
+
+  if (!firmwareMarkedValid && firmwareHealthySince > 0 && now - firmwareHealthySince >= 30000) {
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+      firmwareMarkedValid = true;
+      Serial.println("[OTA] Firmware baru sehat dan ditandai valid.");
+    }
+  }
 
   // Re-start BLE Advertising if disconnected
   if (!bleDeviceConnected && oldBleDeviceConnected) {

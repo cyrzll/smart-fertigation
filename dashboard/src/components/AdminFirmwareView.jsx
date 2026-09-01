@@ -128,9 +128,9 @@ export const AdminFirmwareView = ({ apiUrl = '' }) => {
             <p className="font-mono font-bold text-[#3A6B2A] mt-1">{nextVersion}</p>
             <p className="text-[10px] text-[#8A9B7A] mt-1">Tanggal dan waktu dibuat otomatis oleh server.</p>
           </div>
-          <button type="submit" disabled={loading || !file} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#7BAF5A] text-white text-xs font-bold disabled:opacity-50">
+          <button type="submit" disabled={loading || !file || status?.compiler?.ready === false || status?.compiler?.compiling} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#7BAF5A] text-white text-xs font-bold disabled:opacity-50">
             {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
-            {loading ? 'Mengompilasi...' : 'Compile & Terbitkan'}
+            {loading || status?.compiler?.compiling ? 'Mengompilasi...' : 'Compile & Terbitkan'}
           </button>
         </div>
 
@@ -138,18 +138,30 @@ export const AdminFirmwareView = ({ apiUrl = '' }) => {
       </form>
 
       <aside className="space-y-4">
+        {status?.compiler?.ready === false && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-2.5 text-xs text-red-700 leading-relaxed">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Compiler server belum siap</p>
+              <p className="mt-1">{status.compiler.error || 'arduino-cli tidak ditemukan.'}</p>
+              <p className="mt-2 font-mono text-[10px]">ARDUINO_CLI_PATH={status.compiler.cli}</p>
+            </div>
+          </div>
+        )}
         <div className="bg-white border border-[#D4DFC8] rounded-xl p-5">
           <div className="flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-[#7BAF5A]" /><h4 className="font-bold text-sm">Firmware aktif</h4></div>
           <dl className="mt-4 space-y-3 text-xs">
             <div><dt className="text-[#8A9B7A]">Versi</dt><dd className="font-mono font-bold mt-1">{status?.firmware?.version || '-'}</dd></div>
             <div><dt className="text-[#8A9B7A]">Dipublikasikan</dt><dd className="font-medium mt-1">{status?.firmware?.published_at ? new Date(status.firmware.published_at).toLocaleString('id-ID') : '-'}</dd></div>
             <div><dt className="text-[#8A9B7A]">Board</dt><dd className="font-mono text-[11px] mt-1 break-all">{status?.compiler?.fqbn || '-'}</dd></div>
+            <div><dt className="text-[#8A9B7A]">Partition scheme</dt><dd className="font-mono text-[11px] mt-1 break-all">{status?.compiler?.board_options || '-'}</dd></div>
+            <div><dt className="text-[#8A9B7A]">Compiler</dt><dd className={`font-medium mt-1 ${status?.compiler?.ready ? 'text-emerald-600' : 'text-red-600'}`}>{status?.compiler?.ready ? status.compiler.version : 'Tidak tersedia'}</dd></div>
             <div><dt className="text-[#8A9B7A]">Ukuran binary</dt><dd className="font-medium mt-1">{status?.firmware?.size ? `${(status.firmware.size / 1024 / 1024).toFixed(2)} MB` : 'Belum ada .bin'}</dd></div>
           </dl>
         </div>
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-2.5 text-xs text-amber-800 leading-relaxed">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <p>Server wajib memiliki `arduino-cli`, core ESP32, dan seluruh library firmware. Firmware aktif tidak akan diganti jika kompilasi gagal.</p>
+          <p>Server wajib memiliki `arduino-cli`, core ESP32, dan seluruh library firmware. Perangkat lama perlu di-flash via USB sekali memakai `min_spiffs` sebelum menerima firmware besar melalui OTA.</p>
         </div>
       </aside>
     </div>
