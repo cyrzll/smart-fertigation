@@ -14,6 +14,7 @@ import espRouter from './routes/esp.js';
 import plantingsRouter from './routes/plantings.js';
 import authRouter from './routes/auth.js';
 import waRouter from './routes/wa.js';
+import firmwareRouter from './routes/firmware.js';
 import { initWaBot, closeWaBot } from './services/waBot.js';
 import { initWebSocketServer } from './services/wsServer.js';
 
@@ -64,6 +65,7 @@ app.route('/api/growth-phases', growthPhasesRouter);
 app.route('/api/demo', demoRouter);
 app.route('/api/plantings', plantingsRouter);
 app.route('/api/wa', waRouter);
+app.route('/api/firmware', firmwareRouter);
 app.route('/api', espRouter);
 
 app.get('/', (c) => {

@@ -460,19 +460,6 @@ export function sendLedControlToDevice(deviceCode, serialCode, state = 'ON', gpi
     console.log(`⚠️ [WebSocket] Failed to send LED_CONTROL to ${deviceCode || serialCode} - Socket not open`);
     return false;
 }
-export function sendRestartToDevice(deviceCode, serialCode) {
-    const target = findDeviceSocket(deviceCode, serialCode);
-    if (target && target.ws.readyState === WebSocket.OPEN) {
-        target.ws.send(JSON.stringify({
-            type: 'RESTART_DEVICE',
-            timestamp: Date.now(),
-        }));
-        console.log(`🔄 [WebSocket] Sent RESTART_DEVICE to ${target.deviceCode} (${target.serialCode || 'No Serial'})`);
-        return true;
-    }
-    console.log(`⚠️ [WebSocket] Failed to restart ${deviceCode || serialCode} - Socket not open`);
-    return false;
-}
 export function isDeviceSocketConnected(deviceCode, serialCode) {
     return findDeviceSocket(deviceCode, serialCode) !== null;
 }
