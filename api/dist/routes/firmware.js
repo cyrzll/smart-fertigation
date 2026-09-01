@@ -125,6 +125,7 @@ app.get('/admin/status', async (c) => {
         }
         const metadata = await currentMetadata();
         const cli = process.env.ARDUINO_CLI_PATH || 'arduino-cli';
+        const boardOptions = process.env.ESP32_BOARD_OPTIONS || 'PartitionScheme=min_spiffs';
         let compilerReady = false;
         let compilerVersion = '';
         let compilerError = '';
@@ -159,6 +160,7 @@ app.get('/admin/status', async (c) => {
                 version: compilerVersion,
                 error: compilerError,
                 fqbn: process.env.ESP32_FQBN || 'esp32:esp32:esp32',
+                board_options: boardOptions,
             },
         });
     }
@@ -235,9 +237,11 @@ app.post('/publish', async (c) => {
         await writeFile(join(sketchDir, 'firmware.ino'), source);
         const cli = process.env.ARDUINO_CLI_PATH || 'arduino-cli';
         const fqbn = process.env.ESP32_FQBN || 'esp32:esp32:esp32';
+        const boardOptions = process.env.ESP32_BOARD_OPTIONS || 'PartitionScheme=min_spiffs';
         const { stdout, stderr } = await execFileAsync(cli, [
             'compile',
             '--fqbn', fqbn,
+            '--board-options', boardOptions,
             '--output-dir', outputDir,
             sketchDir,
         ], {
@@ -272,7 +276,7 @@ app.post('/publish', async (c) => {
         return c.json({
             success: true,
             message: `Firmware ${version} berhasil dikompilasi dan diterbitkan.`,
-            firmware: { ...newMetadata, size: compiled.length, md5, fqbn },
+            firmware: { ...newMetadata, size: compiled.length, md5, fqbn, board_options: boardOptions },
             compiler_output: `${stdout || ''}${stderr || ''}`.slice(-6000),
         });
     }

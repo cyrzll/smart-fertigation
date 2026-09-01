@@ -24,9 +24,15 @@ Board dapat dikonfigurasi melalui environment variable, misalnya:
 
 ```env
 ESP32_FQBN=esp32:esp32:esp32
+ESP32_BOARD_OPTIONS=PartitionScheme=min_spiffs
 ARDUINO_CLI_PATH=/usr/local/bin/arduino-cli
 FIRMWARE_PUBLIC_BASE_URL=https://api.domain-anda.com
 ```
+
+`min_spiffs` menyediakan dua slot aplikasi OTA besar pada flash 4 MB. Perangkat
+yang sebelumnya memakai partition scheme `default` harus di-flash melalui USB
+sekali dengan scheme yang sama; update OTA aplikasi tidak dapat mengganti tabel
+partisi perangkat.
 
 Source yang berhasil dibangun disimpan sebagai `firmware.ino`, sedangkan hasil
 OTA diterbitkan sebagai `firmware.bin`. Apabila compile gagal, firmware aktif
