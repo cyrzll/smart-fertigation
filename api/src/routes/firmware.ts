@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ const firmwareFile = fileURLToPath(new URL('../../firmware/firmware.bin', import
 const metadataFile = fileURLToPath(new URL('../../firmware/firmware.json', import.meta.url));
 const sourceFile = fileURLToPath(new URL('../../firmware/firmware.ino', import.meta.url));
 const execFileAsync = promisify(execFile);
+let compileInProgress = false;
 
 type FirmwareMetadata = {
   version: string;
@@ -135,6 +136,19 @@ app.get('/admin/status', async (c) => {
       return c.json({ success: false, message: 'Akses admin diperlukan.' }, 403);
     }
     const metadata = await currentMetadata();
+    const cli = process.env.ARDUINO_CLI_PATH || 'arduino-cli';
+    let compilerReady = false;
+    let compilerVersion = '';
+    let compilerError = '';
+    try {
+      const result = await execFileAsync(cli, ['version'], { timeout: 5000 });
+      compilerReady = true;
+      compilerVersion = result.stdout.trim();
+    } catch (error: any) {
+      compilerError = error.code === 'ENOENT'
+        ? `Executable tidak ditemukan: ${cli}`
+        : error.message;
+    }
     let binaryInfo: { size: number; md5: string } | null = null;
     try {
       const binary = await readFile(firmwareFile);
@@ -149,7 +163,11 @@ app.get('/admin/status', async (c) => {
         major: nextVersion(metadata.version, 'major'),
       },
       compiler: {
-        cli: process.env.ARDUINO_CLI_PATH || 'arduino-cli',
+        ready: compilerReady,
+        compiling: compileInProgress,
+        cli,
+        version: compilerVersion,
+        error: compilerError,
         fqbn: process.env.ESP32_FQBN || 'esp32:esp32:esp32',
       },
     });
@@ -180,6 +198,7 @@ app.get('/', async (c) => {
 // Multipart: firmware (.ino), bump_type (patch|minor|major), notes, mandatory
 app.post('/publish', async (c) => {
   let buildRoot = '';
+  let ownsCompileLock = false;
   try {
     if (!(await requireAdmin(c))) {
       return c.json({ success: false, message: 'Hanya admin yang dapat menerbitkan firmware.' }, 403);
@@ -203,6 +222,11 @@ app.post('/publish', async (c) => {
     if (!notes) {
       return c.json({ success: false, message: 'Catatan perubahan wajib diisi.' }, 400);
     }
+    if (compileInProgress) {
+      return c.json({ success: false, message: 'Kompilasi firmware lain sedang berjalan. Tunggu sampai selesai.' }, 409);
+    }
+    compileInProgress = true;
+    ownsCompileLock = true;
 
     const oldMetadata = await currentMetadata();
     const version = nextVersion(oldMetadata.version, bumpType);
@@ -232,11 +256,17 @@ app.post('/publish', async (c) => {
       '--output-dir', outputDir,
       sketchDir,
     ], {
-      timeout: 10 * 60 * 1000,
+      timeout: 30 * 60 * 1000,
       maxBuffer: 4 * 1024 * 1024,
     });
 
-    const compiledFile = join(outputDir, 'firmware.ino.bin');
+    const outputFiles = await readdir(outputDir);
+    const compiledName = outputFiles.find((name) => name === 'firmware.ino.bin')
+      || outputFiles.find((name) => name.endsWith('.ino.bin') && !name.includes('bootloader') && !name.includes('partitions'));
+    if (!compiledName) {
+      throw new Error(`Kompilasi selesai tetapi binary aplikasi tidak ditemukan. Output: ${outputFiles.join(', ')}`);
+    }
+    const compiledFile = join(outputDir, compiledName);
     const compiled = await readFile(compiledFile);
     const md5 = createHash('md5').update(compiled).digest('hex');
     const newMetadata: FirmwareMetadata = {
@@ -275,6 +305,7 @@ app.post('/publish', async (c) => {
       compiler_output: compilerOutput,
     }, missingCli ? 503 : 422);
   } finally {
+    if (ownsCompileLock) compileInProgress = false;
     if (buildRoot) await rm(buildRoot, { recursive: true, force: true }).catch(() => {});
   }
 });
