@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { ShieldCheck, Users, MessageSquare, LogOut, RefreshCw, QrCode, Droplets } from 'lucide-react';
+import { ShieldCheck, Users, MessageSquare, LogOut, RefreshCw, QrCode, Cpu } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UsersView } from './UsersView';
 import { WaBotView } from './WaBotView';
 import { goeyToast } from 'goey-toast';
 import { ConfirmModal } from './ConfirmModal';
+import { AdminFirmwareView } from './AdminFirmwareView';
 
 export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
   const [subTab, setSubTab] = useState('users');
@@ -121,6 +122,17 @@ export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
             <MessageSquare className="w-3.5 h-3.5" />
             <span>WhatsApp</span>
           </button>
+          <button
+            onClick={() => setSubTab('firmware')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${
+              subTab === 'firmware'
+                ? 'border border-[#7BAF5A] text-[#3A6B2A]'
+                : 'text-[#8A9B7A] hover:text-[#3A6B2A]'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            <span>Firmware</span>
+          </button>
         </div>
       </div>
 
@@ -171,6 +183,7 @@ export const AdminCenterView = ({ apiUrl, user, onLogout }) => {
       <div className="transition-all duration-200">
         {subTab === 'users' && <UsersView apiUrl={apiUrl} />}
         {subTab === 'wa' && <WaBotView apiUrl={apiUrl} />}
+        {subTab === 'firmware' && <AdminFirmwareView apiUrl={apiUrl} />}
       </div>
 
       {/* Reset Session Confirmation Modal */}
