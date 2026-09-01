@@ -88,27 +88,41 @@ function compareVersions(left: string, right: string) {
 app.get('/update', async (c) => {
   try {
     const currentVersion = c.req.query('current_version') || '';
-    const { metadata, size, md5 } = await getFirmwareInfo();
+    const metadata = await currentMetadata();
+    let size = 0;
+    let md5 = '';
+    let firmwareAvailable = false;
+    try {
+      const binary = await readFile(firmwareFile);
+      size = binary.length;
+      md5 = createHash('md5').update(binary).digest('hex');
+      firmwareAvailable = binary.length > 0;
+    } catch (_) {
+      // Metadata tetap dapat diperiksa sebelum binary pertama berhasil diterbitkan.
+    }
     const configuredBaseUrl = process.env.FIRMWARE_PUBLIC_BASE_URL?.replace(/\/$/, '');
     const requestOrigin = new URL(c.req.url).origin;
     const downloadUrl = `${configuredBaseUrl || requestOrigin}/api/firmware`;
+    const newerVersionExists = currentVersion ? compareVersions(metadata.version, currentVersion) > 0 : true;
 
     return c.json({
       success: true,
       current_version: currentVersion || null,
       latest_version: metadata.version,
-      update_available: currentVersion ? compareVersions(metadata.version, currentVersion) > 0 : true,
+      firmware_available: firmwareAvailable,
+      update_available: firmwareAvailable && newerVersionExists,
+      status: !firmwareAvailable ? 'BINARY_NOT_PUBLISHED' : newerVersionExists ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE',
       mandatory: Boolean(metadata.mandatory),
       notes: metadata.notes || '',
       published_at: metadata.published_at || null,
       size,
       md5,
-      download_url: downloadUrl,
+      download_url: firmwareAvailable ? downloadUrl : null,
     });
   } catch (error: any) {
     return c.json({
       success: false,
-      message: 'Firmware belum tersedia di server.',
+      message: 'Metadata firmware belum tersedia di server.',
       error: error.message,
       expected_directory: firmwareDir,
     }, 404);
@@ -193,7 +207,15 @@ app.post('/publish', async (c) => {
     const oldMetadata = await currentMetadata();
     const version = nextVersion(oldMetadata.version, bumpType);
     const publishedAt = jakartaIsoTimestamp();
-    const source = Buffer.from(await upload.arrayBuffer());
+    const uploadedSource = Buffer.from(await upload.arrayBuffer()).toString('utf8');
+    const versionDeclaration = /const\s+char\s*\*\s*firmware_version\s*=\s*"[^"]*"\s*;/;
+    if (!versionDeclaration.test(uploadedSource)) {
+      return c.json({
+        success: false,
+        message: 'Source .ino harus memiliki deklarasi const char* firmware_version agar versi dapat diperbarui otomatis.',
+      }, 400);
+    }
+    const source = Buffer.from(uploadedSource.replace(versionDeclaration, `const char* firmware_version = "${version}";`), 'utf8');
 
     buildRoot = await mkdtemp(join(tmpdir(), 'fertigation-firmware-'));
     const sketchDir = join(buildRoot, 'firmware');
