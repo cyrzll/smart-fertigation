@@ -24,6 +24,7 @@
   - WebSockets by Markus Sattler (v2.4.1+)
   - ArduinoJson by Benoit Blanchon (v6.21.x+)
   - WiFiManager by tzapu (v2.0.16+)
+  - DHT sensor library by Adafruit (beserta Adafruit Unified Sensor)
   =================================================================================
 */
 
@@ -35,6 +36,7 @@
 #include <Ticker.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <DHT.h>
 #include <time.h>
 
 // ESP32 BLE Core Libraries
@@ -103,21 +105,21 @@ bool is_authenticated = false;
 // Pin Konfigurasi Sensor Fisik:
 //   - SENSOR_PH_PIN   : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
 //   - SENSOR_TDS_PIN  : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
-//   - SENSOR_TEMP_PIN : GPIO 33 (ADC1 ESP32) -> Pin OUT Modul Sensor Suhu [TERPASANG AKTIF]
+//   - SENSOR_TEMP_PIN : GPIO 33 -> Pin OUT/DATA Modul DHT22 [TERPASANG AKTIF]
 //
 // Pinout Sensor Suhu (3-Pin: +, -, OUT):
 //   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
 //   - '-'   : Ground                 -> Hubungkan ke GND ESP32
-//   - 'OUT' : Output Signal / Analog -> Hubungkan ke GPIO 33 (D33 / ADC1) ESP32
+//   - 'OUT' : Data Digital            -> Hubungkan ke GPIO 33 (D33) ESP32
 #define SENSOR_PH_PIN          34   // Pin Po Modul Sensor pH-4502C
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
 #define SENSOR_TEMP_PIN        33   // Pin OUT Modul Sensor Suhu (GPIO 33)
+#define SENSOR_TEMP_TYPE       DHT22
 
 #define PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
 #define TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS (default 1.0)
 #define TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
-#define TEMP_VOLTAGE_OFFSET     0.0  // LM35 = 0.0V; ubah ke 0.5V jika sensor adalah TMP36
-#define WATER_TEMP_ESTIMATE     25.0 // Suhu estimasi air tandon fallback (25.0 °C)
+#define WATER_TEMP_ESTIMATE     25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
 
 // Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -129,6 +131,7 @@ bool is_authenticated = false;
 
 WebSocketsClient webSocket;
 Ticker ledTicker;
+DHT dht(SENSOR_TEMP_PIN, SENSOR_TEMP_TYPE);
 
 // BLE Server & Characteristic Pointers
 BLEServer *pBleServer = NULL;
@@ -140,6 +143,7 @@ bool wifiConnecting = false;
 String wsDiagnostic = "NOT_CONNECTED";
 IPAddress wsResolvedIp;
 bool bleStackInitialized = false;
+volatile bool bleNotifyInProgress = false;
 
 // Perbarui indikator tanpa delay:
 // hijau tetap = Wi-Fi tersambung, hijau berkedip = mencoba Wi-Fi,
@@ -244,6 +248,7 @@ unsigned long lastSensorCheck = 0;
 float lastSentPH = -999.0;
 float lastSentTDS = -999.0;
 float lastSentTemp = -999.0;
+unsigned long lastDhtRead = 0;
 
 // Fungsi Membaca Nilai pH Aktual Cepat dari Sensor pH-4502C (Pin Po - GPIO 34)
 float readPHSensor() {
@@ -264,45 +269,20 @@ float readPHSensor() {
   return calculatedPH;
 }
 
-// Fungsi Membaca Nilai Suhu Aktual Cepat dari Sensor Suhu (Pin OUT - GPIO 33)
-// Sensor suhu analog linear 10mV/°C (LM35 secara default).
-// Untuk TMP36, ubah TEMP_VOLTAGE_OFFSET menjadi 0.5. Modul NTC membutuhkan
-// rumus sesuai nilai resistor/kurva modul dan tidak dapat memakai rumus ini.
+// DHT22 tidak boleh dibaca lebih cepat dari sekitar 2 detik. Pemanggilan di antara
+// interval tersebut mengembalikan nilai valid terakhir.
 float readTempSensor() {
-  const int samples = 15;
-  int analogBuffer[15];
+  unsigned long now = millis();
+  if (lastDhtRead != 0 && now - lastDhtRead < 2200) return sensorTemp;
+  lastDhtRead = now;
 
-  for (int i = 0; i < samples; i++) {
-    analogBuffer[i] = analogRead(SENSOR_TEMP_PIN);
-    delayMicroseconds(200); // Sampling instan non-blocking
+  float measuredTemp = dht.readTemperature();
+  if (isnan(measuredTemp)) {
+    Serial.println("[DHT22] Pembacaan suhu gagal; memakai nilai valid terakhir.");
+    return sensorTemp;
   }
 
-  // Median filtering untuk menyaring noise spike ADC
-  for (int i = 0; i < samples - 1; i++) {
-    for (int j = i + 1; j < samples; j++) {
-      if (analogBuffer[i] > analogBuffer[j]) {
-        int temp = analogBuffer[i];
-        analogBuffer[i] = analogBuffer[j];
-        analogBuffer[j] = temp;
-      }
-    }
-  }
-
-  float avgAdc = 0;
-  for (int i = 3; i < samples - 3; i++) {
-    avgAdc += analogBuffer[i];
-  }
-  avgAdc /= (samples - 6);
-
-  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
-
-  // Rumus konversi voltase ke suhu (°C)
-  float calculatedTemp = ((voltage - TEMP_VOLTAGE_OFFSET) * 100.0) + TEMP_CALIBRATION_OFFSET;
-
-  // Batas rentang realistis lingkungan fertigasi melon (0.0 °C - 60.0 °C)
-  if (calculatedTemp < 0.0) calculatedTemp = 0.0;
-  if (calculatedTemp > 60.0) calculatedTemp = 60.0;
-  return calculatedTemp;
+  return measuredTemp + TEMP_CALIBRATION_OFFSET;
 }
 
 // Fungsi Membaca Nilai TDS Aktual Cepat (PPM) dari Sensor TDS Meter V1.0 (Pin A - GPIO 32)
@@ -334,8 +314,9 @@ float readTDSSensor() {
 
   float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
 
-  // Kompensasi suhu larutan dinamis dari pembacaan sensor suhu aktual: fComp = 1.0 + 0.02 * (T - 25.0)
-  float currentWaterTemp = (sensorTemp > 0.0 && sensorTemp < 60.0) ? sensorTemp : WATER_TEMP_ESTIMATE;
+  // DHT22 mengukur suhu udara, bukan suhu larutan. Gunakan estimasi suhu air
+  // sampai tersedia probe suhu air terpisah agar kompensasi TDS tidak keliru.
+  float currentWaterTemp = WATER_TEMP_ESTIMATE;
   float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
   float compensationVoltage = voltage / compensationCoefficient;
 
@@ -400,6 +381,11 @@ void blinkConfirmationLED(int times) {
 // BLE Notification & Messaging Helpers (Safe Chunking for Long Payloads)
 // =================================================================================
 void sendBleNotify(String message) {
+  // Callback BLE dan loop utama dapat mengirim pada saat bersamaan. Jangan biarkan
+  // potongan dua JSON saling menyisip di browser.
+  if (bleNotifyInProgress) return;
+  bleNotifyInProgress = true;
+
   if (bleDeviceConnected && pBleTxChar != NULL) {
     // Append newline delimiter for easy client buffer parsing
     String packet = message + "\n";
@@ -419,6 +405,8 @@ void sendBleNotify(String message) {
     }
     Serial.printf("[BLE TX] %s\n", message.c_str());
   }
+
+  bleNotifyInProgress = false;
 }
 
 // Helper to sanitize host string (strip https://, http://, wss://, ws://, trailing slash)
@@ -1043,7 +1031,13 @@ void sendWsCommandComplete(int commandId, String message) {
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
-      if (wsDiagnostic == "CONNECTED") wsDiagnostic = "DISCONNECTED_RETRYING";
+      if (wsDiagnostic == "TLS_CONNECTING") {
+        wsDiagnostic = "TLS_FAILED_RETRYING";
+      } else if (wsDiagnostic == "WS_CONNECTING") {
+        wsDiagnostic = "WS_FAILED_RETRYING";
+      } else {
+        wsDiagnostic = "DISCONNECTED_RETRYING";
+      }
       Serial.println("[WS] Terputus dari WebSocket Server! Mencoba menghubungkan kembali...");
       break;
 
@@ -1167,7 +1161,7 @@ void setup() {
   pinMode(STATUS_GREEN_PIN, OUTPUT);
   pinMode(SENSOR_PH_PIN, INPUT);
   pinMode(SENSOR_TDS_PIN, INPUT);
-  pinMode(SENSOR_TEMP_PIN, INPUT);
+  dht.begin();
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V

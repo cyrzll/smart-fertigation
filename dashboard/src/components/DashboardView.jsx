@@ -350,7 +350,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
     return { label: 'Pekat (Tinggi)', color: 'bg-red-50 text-red-700 border-red-300', dot: 'bg-red-500' };
   };
 
-  // Status helper untuk nilai Suhu Air / Lingkungan (°C)
+  // Status helper untuk nilai suhu lingkungan DHT22 (°C)
   const getSuhuStatus = (suhu) => {
     if (suhu == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
     if (suhu < 20) return { label: 'Dingin (Rendah)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
@@ -576,7 +576,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 3: SENSOR SUHU AIR TANDON (Pin OUT - GPIO 33) */}
+          {/* Card 3: SENSOR SUHU LINGKUNGAN DHT22 (Pin OUT - GPIO 33) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -584,8 +584,8 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Thermometer className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor Suhu Air</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Suhu larutan tandon</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor Suhu DHT22</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">Suhu lingkungan kebun</p>
                 </div>
               </div>
 
@@ -615,7 +615,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                 {/* Target optimal range indicator (20 - 30 / 50 = 40% - 60%) */}
                 <div
                   className="absolute left-[40%] w-[20%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
-                  title="Rentang Optimal Suhu Air Melon (20 - 30 °C)"
+                  title="Rentang suhu lingkungan ideal (20 - 30 °C)"
                 />
                 {/* Current Value Marker */}
                 {suhuVal !== null && (
