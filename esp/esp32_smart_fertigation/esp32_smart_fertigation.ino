@@ -48,7 +48,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.5.0-BLE-WebSocket-Hybrid";
+const char* firmware_version = "v2.5.3-TDS-Calibrated-ADC";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -116,10 +116,14 @@ bool is_authenticated = false;
 #define SENSOR_TEMP_PIN        33   // Pin OUT Modul Sensor Suhu (GPIO 33)
 #define SENSOR_TEMP_TYPE       DHT22
 
-#define PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
-#define TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS (default 1.0)
-#define TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
-#define WATER_TEMP_ESTIMATE     25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
+#define DEFAULT_PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
+#define DEFAULT_TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS default (dapat dikalibrasi dinamis via Flash NVS)
+#define DEFAULT_TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
+#define WATER_TEMP_ESTIMATE             25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
+
+// Faktor Kalibrasi Aktif (Disimpan & Dimuat dari Flash NVS)
+float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
+float ph_calibration_offset = DEFAULT_PH_CALIBRATION_OFFSET;
 
 // Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -243,12 +247,22 @@ float sensorPH = 7.0;
 float sensorTDS = 0.0;
 float sensorEC = 0.0;
 float sensorTemp = 25.0;
+bool sensorTempValid = false;
 
 unsigned long lastSensorCheck = 0;
 float lastSentPH = -999.0;
 float lastSentTDS = -999.0;
 float lastSentTemp = -999.0;
 unsigned long lastDhtRead = 0;
+
+// Buffer TDS non-blocking: 30 sampel x 40 ms = jendela pengukuran sekitar 1,2 detik.
+// Sampling berkala jauh lebih stabil daripada membaca beruntun dalam beberapa ms.
+#define TDS_SAMPLE_COUNT 30
+uint32_t tdsMilliVoltBuffer[TDS_SAMPLE_COUNT];
+int tdsSampleIndex = 0;
+int tdsSamplesAvailable = 0;
+unsigned long lastTdsSample = 0;
+float filteredTdsVoltage = 0.0;
 
 // Fungsi Membaca Nilai pH Aktual Cepat dari Sensor pH-4502C (Pin Po - GPIO 34)
 float readPHSensor() {
@@ -263,7 +277,7 @@ float readPHSensor() {
 
   // Rumus Linear pH-4502C: pH 7.0 ~ 2.50V (dapat dikalibrasi via trimpot modul)
   // Slope: 5.70 pH/Volt
-  float calculatedPH = 7.0 + ((2.50 - voltage) * 5.70) + PH_CALIBRATION_OFFSET;
+  float calculatedPH = 7.0 + ((2.50 - voltage) * 5.70) + ph_calibration_offset;
   if (calculatedPH < 0.0) calculatedPH = 0.0;
   if (calculatedPH > 14.0) calculatedPH = 14.0;
   return calculatedPH;
@@ -282,47 +296,130 @@ float readTempSensor() {
     return sensorTemp;
   }
 
-  return measuredTemp + TEMP_CALIBRATION_OFFSET;
-}
-
-// Fungsi Membaca Nilai TDS Aktual Cepat (PPM) dari Sensor TDS Meter V1.0 (Pin A - GPIO 32)
-float readTDSSensor() {
-  const int samples = 15;
-  int analogBuffer[15];
-
-  for (int i = 0; i < samples; i++) {
-    analogBuffer[i] = analogRead(SENSOR_TDS_PIN);
-    delayMicroseconds(200); // Sampling instan non-blocking
+  measuredTemp += DEFAULT_TEMP_CALIBRATION_OFFSET;
+  // Tolak data ber-checksum valid tetapi tidak masuk akal untuk lingkungan kebun.
+  // Kondisi ini biasanya disebabkan tipe sensor salah, kabel DATA tanpa pull-up,
+  // kabel terlalu panjang, atau suplai sensor yang tidak stabil.
+  if (measuredTemp < -10.0 || measuredTemp > 60.0) {
+    Serial.printf("[DHT22] Nilai tidak wajar ditolak: %.1f °C. Periksa wiring/pull-up DATA.\n", measuredTemp);
+    return sensorTemp;
   }
 
-  // Median filtering cepat untuk menyaring noise spike analog
+  sensorTempValid = true;
+  return measuredTemp;
+}
+
+// Ambil tepat satu sampel agar loop WebSocket/BLE tidak terblokir.
+void updateTdsSampling() {
+  unsigned long now = millis();
+  if (lastTdsSample != 0 && now - lastTdsSample < 40) return;
+  lastTdsSample = now;
+
+  // Gunakan kalibrasi ADC bawaan chip, bukan asumsi linear 0-4095 = 0-3,3 V.
+  tdsMilliVoltBuffer[tdsSampleIndex] = analogReadMilliVolts(SENSOR_TDS_PIN);
+  tdsSampleIndex = (tdsSampleIndex + 1) % TDS_SAMPLE_COUNT;
+  if (tdsSamplesAvailable < TDS_SAMPLE_COUNT) tdsSamplesAvailable++;
+}
+
+// Fungsi simpan faktor kalibrasi TDS ke Flash Memory (NVS)
+void saveTdsCalibrationFactor(float factor) {
+  if (factor <= 0.05 || factor > 10.0) {
+    Serial.println("[TDS] Faktor kalibrasi tidak valid (harus antara 0.05 s.d 10.0)");
+    return;
+  }
+  tds_calibration_factor = factor;
+  preferences.begin("fertigation", false);
+  preferences.putFloat("tds_factor", tds_calibration_factor);
+  preferences.end();
+  Serial.printf("\n=======================================================\n");
+  Serial.printf("[TDS] BERHASIL! Faktor Kalibrasi Tersimpan di Flash: %.4f\n", tds_calibration_factor);
+  Serial.printf("=======================================================\n\n");
+}
+
+// Fungsi reset kalibrasi TDS ke default (1.0)
+void resetTdsCalibration() {
+  tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
+  preferences.begin("fertigation", false);
+  preferences.remove("tds_factor");
+  preferences.end();
+  Serial.println("[TDS] Faktor kalibrasi dikembalikan ke default (1.0000).");
+}
+
+// Fungsi 1-Click Kalibrasi Otomatis TDS Menggunakan Larutan Standar (misal 1382 PPM)
+bool calibrateTdsWithStandard(float standardPpm) {
+  if (standardPpm <= 0.0) {
+    Serial.println("[TDS] Gagal: Nilai standar PPM harus lebih besar dari 0!");
+    return false;
+  }
+  if (filteredTdsVoltage < 0.035) {
+    Serial.println("[TDS] Gagal: Tegangan sensor terlalu rendah (< 35 mV). Pastikan probe terendam di larutan!");
+    return false;
+  }
+
+  // Hitung nilai PPM mentah sebelum dikalikan faktor
+  float tempCoeff = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  float compVolt = filteredTdsVoltage / tempCoeff;
+  float uncalibratedPpm = (133.42 * pow(compVolt, 3) - 255.86 * pow(compVolt, 2) + 857.39 * compVolt) * 0.5;
+
+  if (uncalibratedPpm <= 10.0) {
+    Serial.println("[TDS] Gagal: Pembacaan sensor terlalu kecil untuk larutan standar.");
+    return false;
+  }
+
+  float newFactor = standardPpm / uncalibratedPpm;
+  saveTdsCalibrationFactor(newFactor);
+  return true;
+}
+
+// Hitung TDS dari buffer tersaring (Pin A - GPIO 32).
+float readTDSSensor() {
+  // Tunggu inisialisasi cukup sampel sebelum mengganti nilai terakhir.
+  if (tdsSamplesAvailable < 5) return sensorTDS;
+
+  uint32_t sortedBuffer[TDS_SAMPLE_COUNT];
+  int samples = tdsSamplesAvailable;
+  for (int i = 0; i < samples; i++) sortedBuffer[i] = tdsMilliVoltBuffer[i];
+
+  // Median filtering untuk menghilangkan noise spike ADC
   for (int i = 0; i < samples - 1; i++) {
     for (int j = i + 1; j < samples; j++) {
-      if (analogBuffer[i] > analogBuffer[j]) {
-        int temp = analogBuffer[i];
-        analogBuffer[i] = analogBuffer[j];
-        analogBuffer[j] = temp;
+      if (sortedBuffer[i] > sortedBuffer[j]) {
+        uint32_t temp = sortedBuffer[i];
+        sortedBuffer[i] = sortedBuffer[j];
+        sortedBuffer[j] = temp;
       }
     }
   }
 
-  float avgAdc = 0;
-  for (int i = 3; i < samples - 3; i++) {
-    avgAdc += analogBuffer[i];
+  // Buang sekitar 20% nilai terendah dan tertinggi (trimmed mean)
+  int trim = samples / 5;
+  if (trim < 1) trim = 0;
+  uint32_t milliVoltSum = 0;
+  int count = 0;
+  for (int i = trim; i < samples - trim; i++) {
+    milliVoltSum += sortedBuffer[i];
+    count++;
   }
-  avgAdc /= (samples - 6);
+  float measuredVoltage = (count > 0) ? (((float)milliVoltSum / (float)count) / 1000.0) : 0.0;
 
-  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
+  // Exponential moving average (EMA) smoothing untuk stabilitas
+  if (filteredTdsVoltage <= 0.0) filteredTdsVoltage = measuredVoltage;
+  else filteredTdsVoltage = (filteredTdsVoltage * 0.80) + (measuredVoltage * 0.20);
+
+  // Jika tegangan terlalu kecil (< 35 mV), probe di udara / kering -> 0 PPM
+  if (filteredTdsVoltage < 0.035) {
+    return 0.0;
+  }
 
   // DHT22 mengukur suhu udara, bukan suhu larutan. Gunakan estimasi suhu air
   // sampai tersedia probe suhu air terpisah agar kompensasi TDS tidak keliru.
   float currentWaterTemp = WATER_TEMP_ESTIMATE;
   float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
-  float compensationVoltage = voltage / compensationCoefficient;
+  float compensationVoltage = filteredTdsVoltage / compensationCoefficient;
 
   // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
   // TDS (ppm) = (133.42 * V^3 - 255.86 * V^2 + 857.39 * V) * 0.5 * factor
-  float calculatedTDS = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5 * TDS_CALIBRATION_FACTOR;
+  float calculatedTDS = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5 * tds_calibration_factor;
 
   if (calculatedTDS < 0.0) calculatedTDS = 0.0;
   return calculatedTDS;
@@ -424,12 +521,12 @@ String sanitizeHostString(String host) {
 }
 
 bool syncClockForTls() {
-  // Sertifikat TLS tidak dapat divalidasi jika jam ESP masih 1 Januari 1970.
-  if (time(nullptr) > 1704067200) return true; // sudah melewati 1 Januari 2024
+  const long wibUtcOffsetSeconds = 7L * 60L * 60L;
+  configTime(wibUtcOffsetSeconds, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
 
+  // Sertifikat TLS tidak dapat divalidasi jika jam ESP masih 1 Januari 1970.
   wsDiagnostic = "SYNCING_TIME";
   Serial.println("[WSS] Menyinkronkan waktu NTP untuk validasi sertifikat TLS...");
-  configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
   unsigned long startedAt = millis();
   while (time(nullptr) <= 1704067200 && millis() - startedAt < 12000) {
     delay(250);
@@ -443,11 +540,11 @@ bool syncClockForTls() {
     return false;
   }
 
-  struct tm utcTime;
-  getLocalTime(&utcTime, 1000);
-  Serial.printf("[WSS] Waktu UTC tersinkron: %04d-%02d-%02d %02d:%02d:%02d\n",
-                utcTime.tm_year + 1900, utcTime.tm_mon + 1, utcTime.tm_mday,
-                utcTime.tm_hour, utcTime.tm_min, utcTime.tm_sec);
+  struct tm wibTime;
+  getLocalTime(&wibTime, 1000);
+  Serial.printf("[WSS] Waktu WIB (UTC+7) tersinkron: %04d-%02d-%02d %02d:%02d:%02d\n",
+                wibTime.tm_year + 1900, wibTime.tm_mon + 1, wibTime.tm_mday,
+                wibTime.tm_hour, wibTime.tm_min, wibTime.tm_sec);
   return true;
 }
 
@@ -587,7 +684,8 @@ void sendBleStatus() {
   sensors["ph"] = sensorPH;
   sensors["tds"] = sensorTDS;
   sensors["ec"] = sensorEC;
-  sensors["suhu"] = sensorTemp;
+  if (sensorTempValid) sensors["suhu"] = sensorTemp;
+  else sensors["suhu"] = nullptr;
 
   String output;
   serializeJson(doc, output);
@@ -902,6 +1000,51 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
 
           reconnectWebSocket();
         }
+        // 13. CALIBRATE_TDS: Kalibrasi 1-klik dengan larutan standar PPM
+        else if (cmd == "CALIBRATE_TDS") {
+          float standardPpm = doc["standard_ppm"] | 1382.0;
+          bool success = calibrateTdsWithStandard(standardPpm);
+
+          StaticJsonDocument<256> res;
+          res["type"] = "TDS_CALIBRATE_RESULT";
+          res["success"] = success;
+          res["factor"] = tds_calibration_factor;
+          res["standard_ppm"] = standardPpm;
+          res["message"] = success ? "Kalibrasi TDS berhasil disimpan ke Flash!" : "Gagal kalibrasi TDS, periksa larutan probe.";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
+        }
+        // 14. SET_TDS_FACTOR: Atur faktor kalibrasi TDS manual
+        else if (cmd == "SET_TDS_FACTOR") {
+          float factor = doc["factor"] | 1.0;
+          saveTdsCalibrationFactor(factor);
+
+          StaticJsonDocument<256> res;
+          res["type"] = "TDS_CALIBRATE_RESULT";
+          res["success"] = true;
+          res["factor"] = tds_calibration_factor;
+          res["message"] = "Faktor kalibrasi TDS berhasil diperbarui!";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
+        }
+        // 15. RESET_TDS_CAL: Reset kalibrasi TDS ke default 1.0
+        else if (cmd == "RESET_TDS_CAL") {
+          resetTdsCalibration();
+
+          StaticJsonDocument<256> res;
+          res["type"] = "TDS_CALIBRATE_RESULT";
+          res["success"] = true;
+          res["factor"] = tds_calibration_factor;
+          res["message"] = "Faktor kalibrasi TDS direset ke 1.0000.";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
+        }
       }
     }
 };
@@ -1004,13 +1147,18 @@ void sendWsTelemetry() {
   doc["ph"] = sensorPH;
   doc["tds"] = sensorTDS;
   doc["ec"] = sensorEC;
-  doc["suhu"] = sensorTemp;
+  if (sensorTempValid) doc["suhu"] = sensorTemp;
+  else doc["suhu"] = nullptr;
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Data Aktual: Suhu: %.1f °C (GPIO 33) | pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorTemp, sensorPH, sensorTDS, sensorEC);
+  if (sensorTempValid) {
+    Serial.printf("[WS Telemetry] Suhu: %.1f °C | pH: %.2f | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTemp, sensorPH, sensorTDS, filteredTdsVoltage, sensorEC);
+  } else {
+    Serial.printf("[WS Telemetry] DHT22 belum valid | pH: %.2f | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorPH, sensorTDS, filteredTdsVoltage, sensorEC);
+  }
 }
 
 // Send Command Completed confirmation
@@ -1165,6 +1313,7 @@ void setup() {
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
+  analogSetPinAttenuation(SENSOR_TDS_PIN, ADC_11db);
 
   // Inisialisasi awal saat boot: kedua valve TERTUTUP (RELAY_CLOSE_STATE)
   digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
@@ -1180,6 +1329,8 @@ void setup() {
   auth_code = preferences.getString("auth_code", "");
   ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
   ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
+  tds_calibration_factor = preferences.getFloat("tds_factor", DEFAULT_TDS_CALIBRATION_FACTOR);
+  ph_calibration_offset = preferences.getFloat("ph_offset", DEFAULT_PH_CALIBRATION_OFFSET);
 
   // Jika NVS masih kosong, gunakan default
   if (ws_host_str == "") {
@@ -1190,6 +1341,7 @@ void setup() {
   }
   preferences.end();
   Serial.printf("[API] URL API Aktif: %s:%d\n", ws_host_str.c_str(), ws_port);
+  Serial.printf("[TDS] Faktor Kalibrasi Aktif: %.4f\n", tds_calibration_factor);
 
   if (auth_code.length() > 0) {
     is_authenticated = true;
@@ -1242,6 +1394,9 @@ void loop() {
     webSocket.loop();
   }
 
+  // Sampling analog TDS berjalan kontinu dan tidak bergantung pada refresh BLE.
+  updateTdsSampling();
+
   unsigned long now = millis();
 
   // Re-start BLE Advertising if disconnected
@@ -1266,6 +1421,17 @@ void loop() {
       resetAuthCode();
     } else if (cmd == "STATUS" || cmd == "status") {
       sendBleStatus();
+    } else if (cmd.startsWith("CAL_TDS ") || cmd.startsWith("cal_tds ")) {
+      float stdPpm = cmd.substring(8).toFloat();
+      calibrateTdsWithStandard(stdPpm);
+    } else if (cmd.startsWith("SET_TDS_FACTOR ") || cmd.startsWith("set_tds_factor ")) {
+      float f = cmd.substring(15).toFloat();
+      saveTdsCalibrationFactor(f);
+    } else if (cmd == "RESET_TDS_CAL" || cmd == "reset_tds_cal") {
+      resetTdsCalibration();
+    } else if (cmd == "RAW_TDS" || cmd == "raw_tds") {
+      Serial.printf("[TDS Debug] Voltase: %.3f V (%.1f mV) | Faktor Kalibrasi: %.4f | TDS: %.1f PPM | EC: %.2f mS/cm\n",
+                    filteredTdsVoltage, filteredTdsVoltage * 1000.0, tds_calibration_factor, sensorTDS, sensorEC);
     }
   }
 

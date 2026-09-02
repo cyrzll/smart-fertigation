@@ -220,6 +220,9 @@ class BleService {
       case 'API_RESET_RESULT':
         this.emit('api_result', data);
         break;
+      case 'TDS_CALIBRATE_RESULT':
+        this.emit('tds_calibrate_result', data);
+        break;
       default:
         this.emit('message', data);
         break;
@@ -358,6 +361,27 @@ class BleService {
   /** Reset API URL to default */
   async resetApiUrl() {
     return this.sendCommand({ cmd: 'RESET_API' });
+  }
+
+  /** Calibrate TDS Sensor using standard PPM solution (e.g. 1382 PPM) */
+  async calibrateTds(standardPpm = 1382) {
+    return this.sendCommand({
+      cmd: 'CALIBRATE_TDS',
+      standard_ppm: Number(standardPpm),
+    });
+  }
+
+  /** Set TDS Calibration Factor manually */
+  async setTdsFactor(factor = 1.0) {
+    return this.sendCommand({
+      cmd: 'SET_TDS_FACTOR',
+      factor: Number(factor),
+    });
+  }
+
+  /** Reset TDS Calibration Factor to 1.0 */
+  async resetTdsCal() {
+    return this.sendCommand({ cmd: 'RESET_TDS_CAL' });
   }
 }
 
