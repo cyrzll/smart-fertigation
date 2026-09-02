@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Bluetooth,
   Wifi,
@@ -7,14 +7,12 @@ import {
   RefreshCw,
   HelpCircle,
   Sliders,
-  Download,
 } from 'lucide-react';
 import { bleService } from '../../services/bleService';
 import { DeviceOverview } from './DeviceOverview';
 import { WifiManager } from './WifiManager';
 import { BleConsole } from './BleConsole';
 import { ToastContainer } from './Toast';
-import { FirmwareUpdater } from './FirmwareUpdater';
 
 export function App({ embedded = false }) {
   const [isConnected, setIsConnected] = useState(false);
@@ -61,14 +59,6 @@ export function App({ embedded = false }) {
 
   // Terminal & BLE Packet Logs
   const [logs, setLogs] = useState([]);
-  const [updateInfo, setUpdateInfo] = useState(null);
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [otaState, setOtaState] = useState({ updating: false, progress: 0, message: '' });
-  const otaUpdatingRef = useRef(false);
-
-  useEffect(() => {
-    otaUpdatingRef.current = otaState.updating;
-  }, [otaState.updating]);
 
   // Toast Notifications
   const [toasts, setToasts] = useState([]);
@@ -96,10 +86,7 @@ export function App({ embedded = false }) {
       } else {
         setIsConnected(false);
         setDeviceName('');
-        if (otaUpdatingRef.current) {
-          setOtaState((prev) => ({ ...prev, progress: Math.max(prev.progress, 5), message: 'ESP32 sedang mengunduh firmware; Bluetooth dihentikan sementara...' }));
-          addToast('warning', 'Bluetooth sengaja diputus agar RAM cukup untuk download HTTPS. Tunggu ESP reboot, lalu hubungkan kembali.', 'OTA Sedang Berjalan');
-        } else if (data.error) {
+        if (data.error) {
           addToast('error', data.error, 'Koneksi Gagal');
         } else {
           addToast('info', 'Koneksi Bluetooth dengan ESP32 terputus.', 'Perangkat Terputus');
@@ -174,19 +161,6 @@ export function App({ embedded = false }) {
       addToast('success', data.message || 'URL API berhasil diperbarui.', 'Konfigurasi API');
     });
 
-    const unsubOtaStatus = bleService.on('ota_status', (data) => {
-      setOtaState((prev) => ({ ...prev, updating: Boolean(data.ota_in_progress), progress: data.progress || prev.progress, message: data.message || '' }));
-    });
-
-    const unsubOtaProgress = bleService.on('ota_progress', (data) => {
-      setOtaState({ updating: true, progress: data.progress || 0, message: data.message || 'Memasang firmware...' });
-    });
-
-    const unsubOtaResult = bleService.on('ota_result', (data) => {
-      setOtaState({ updating: false, progress: data.success ? 100 : 0, message: data.message || '' });
-      addToast(data.success ? 'success' : 'error', data.message || 'Proses OTA selesai.', data.success ? 'Pembaruan Berhasil' : 'Pembaruan Gagal');
-    });
-
     // 13. Packet Logs listener
     const unsubLog = bleService.on('log', (logEntry) => {
       setLogs((prev) => [...prev.slice(-120), logEntry]);
@@ -205,9 +179,6 @@ export function App({ embedded = false }) {
       unsubValve();
       unsubRestart();
       unsubApi();
-      unsubOtaStatus();
-      unsubOtaProgress();
-      unsubOtaResult();
       unsubLog();
     };
   }, [addToast]);
@@ -344,38 +315,6 @@ export function App({ embedded = false }) {
       await bleService.restartDevice();
     } catch (e) {
       addToast('error', 'Gagal restart ESP32: ' + e.message);
-    }
-  };
-
-  const handleCheckUpdate = async () => {
-    if (!isConnected) return;
-    setIsCheckingUpdate(true);
-    try {
-      const response = await fetch(`/api/firmware/update?current_version=${encodeURIComponent(status.firmware || '')}`);
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.message || 'Firmware belum tersedia di server.');
-      setUpdateInfo(data);
-      await bleService.requestOtaStatus();
-      if (data.firmware_available === false) {
-        addToast('warning', 'Metadata ditemukan, tetapi file firmware belum di-compile dan diterbitkan admin.', 'Firmware Belum Tersedia');
-      } else {
-        addToast(data.update_available ? 'warning' : 'success', data.update_available ? `Firmware ${data.latest_version} tersedia.` : 'Firmware sudah versi terbaru.', 'Pemeriksaan Selesai');
-      }
-    } catch (e) {
-      addToast('error', `Gagal memeriksa pembaruan: ${e.message}`, 'Pemeriksaan Gagal');
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  };
-
-  const handleInstallUpdate = async () => {
-    if (!isConnected || !updateInfo?.update_available) return;
-    try {
-      setOtaState({ updating: true, progress: 0, message: 'Mengirim perintah update ke ESP32...' });
-      await bleService.updateFirmware(updateInfo);
-    } catch (e) {
-      setOtaState({ updating: false, progress: 0, message: e.message });
-      addToast('error', `Gagal memulai pembaruan: ${e.message}`, 'Pembaruan Gagal');
     }
   };
 
@@ -547,18 +486,6 @@ export function App({ embedded = false }) {
               </button>
 
               <button
-                onClick={() => setActiveTab('firmware')}
-                className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-                  activeTab === 'firmware'
-                    ? 'bg-[#7BAF5A] text-white shadow-xs'
-                    : 'bg-white border border-[#D4DFC8] text-[#5A6B5A] hover:text-[#3A6B2A] hover:bg-[#F0F4EA]'
-                }`}
-              >
-                <Download className="w-4 h-4" />
-                <span>Firmware</span>
-              </button>
-
-              <button
                 onClick={() => setActiveTab('console')}
                 className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
                   activeTab === 'console'
@@ -591,19 +518,6 @@ export function App({ embedded = false }) {
                 onResetWifi={handleResetWifi}
               />
             )}
-
-            {activeTab === 'firmware' && (
-              <FirmwareUpdater
-                status={status}
-                updateInfo={updateInfo}
-                isChecking={isCheckingUpdate}
-                otaState={otaState}
-                onCheck={handleCheckUpdate}
-                onInstall={handleInstallUpdate}
-              />
-            )}
-
-
 
             {activeTab === 'console' && (
               <BleConsole

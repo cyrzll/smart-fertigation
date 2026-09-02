@@ -220,15 +220,6 @@ class BleService {
       case 'API_RESET_RESULT':
         this.emit('api_result', data);
         break;
-      case 'OTA_STATUS':
-        this.emit('ota_status', data);
-        break;
-      case 'OTA_PROGRESS':
-        this.emit('ota_progress', data);
-        break;
-      case 'OTA_RESULT':
-        this.emit('ota_result', data);
-        break;
       default:
         this.emit('message', data);
         break;
@@ -367,21 +358,6 @@ class BleService {
   /** Reset API URL to default */
   async resetApiUrl() {
     return this.sendCommand({ cmd: 'RESET_API' });
-  }
-
-  /** Request OTA state from ESP32 */
-  async requestOtaStatus() {
-    return this.sendCommand({ cmd: 'OTA_STATUS' });
-  }
-
-  /** Ask ESP32 to download and install firmware from the API */
-  async updateFirmware({ download_url, latest_version, md5 }) {
-    return this.sendCommand({
-      cmd: 'OTA_UPDATE',
-      url: download_url,
-      version: latest_version,
-      md5: md5 || '',
-    });
   }
 }
 

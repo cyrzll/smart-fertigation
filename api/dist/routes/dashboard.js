@@ -78,6 +78,7 @@ app.get('/', async (c) => {
               HOUR(created_at) AS hour,
               ROUND(AVG(ph), 2) AS avg_ph,
               ROUND(AVG(COALESCE(tds, ec * 500)), 0) AS avg_tds,
+              ROUND(AVG(suhu), 1) AS avg_suhu,
               COUNT(*) AS sample_count
        FROM sensor_telemetry
        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)

@@ -18,7 +18,6 @@
   - Real-Time Manual LED & Valve Relay Actuation (Active-Low Non-Blocking Timers)
   - Automatic Sensor Telemetry & Heartbeat Streaming
   - Dual-Key Socket Authentication (device_code & serial_code cross-matching)
-  - Firmware OTA via BLE command + HTTP(S) download, MD5 verification & reboot
   =================================================================================
   Required Libraries (Install via Arduino Library Manager / ESP32 Core):
   - ESP32 BLE Libraries (Built-in to ESP32 Arduino Core: BLEDevice, BLEServer, BLEUtils, BLE2902)
@@ -36,8 +35,6 @@
 #include <Ticker.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <Update.h>
-#include <esp_ota_ops.h>
 #include <time.h>
 
 // ESP32 BLE Core Libraries
@@ -49,7 +46,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.6.0-BLE-OTA";
+const char* firmware_version = "v2.5.0-BLE-WebSocket-Hybrid";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -104,19 +101,23 @@ bool is_authenticated = false;
 #define STATUS_GREEN_PIN     18
 
 // Pin Konfigurasi Sensor Fisik:
-//   - SENSOR_PH_PIN  : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
-//   - SENSOR_TDS_PIN : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
+//   - SENSOR_PH_PIN   : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
+//   - SENSOR_TDS_PIN  : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
+//   - SENSOR_TEMP_PIN : GPIO 35 (ADC1 ESP32) -> Pin OUT Modul Sensor Suhu [TERPASANG AKTIF]
 //
-// Pinout Sensor TDS Meter V1.0:
-//   - '+' : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
-//   - '-' : Ground                 -> Hubungkan ke GND ESP32
-//   - 'A' : Output Analog TDS      -> Hubungkan ke GPIO 32 (D32 / ADC1) ESP32
+// Pinout Sensor Suhu (3-Pin: +, -, OUT):
+//   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
+//   - '-'   : Ground                 -> Hubungkan ke GND ESP32
+//   - 'OUT' : Output Signal / Analog -> Hubungkan ke GPIO 35 (D35 / ADC1) ESP32
 #define SENSOR_PH_PIN          34   // Pin Po Modul Sensor pH-4502C
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
+#define SENSOR_TEMP_PIN        35   // Pin OUT Modul Sensor Suhu (GPIO 35)
 
-#define PH_CALIBRATION_OFFSET  0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
-#define TDS_CALIBRATION_FACTOR 1.0  // Faktor kalibrasi TDS (default 1.0)
-#define WATER_TEMP_ESTIMATE    25.0 // Suhu estimasi air tandon (25.0 °C untuk kompensasi suhu TDS)
+#define PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
+#define TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS (default 1.0)
+#define TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
+#define TEMP_VOLTAGE_OFFSET     0.0  // LM35 = 0.0V; ubah ke 0.5V jika sensor adalah TMP36
+#define WATER_TEMP_ESTIMATE     25.0 // Suhu estimasi air tandon fallback (25.0 °C)
 
 // Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -136,19 +137,9 @@ BLECharacteristic *pBleRxChar = NULL;
 bool bleDeviceConnected = false;
 bool oldBleDeviceConnected = false;
 bool wifiConnecting = false;
-bool otaInProgress = false;
-bool otaRequestPending = false;
-int otaProgress = 0;
-String otaTargetVersion = "";
-String otaPendingUrl = "";
-String otaPendingVersion = "";
-String otaPendingMd5 = "";
-unsigned long firmwareHealthySince = 0;
-bool firmwareMarkedValid = false;
 String wsDiagnostic = "NOT_CONNECTED";
 IPAddress wsResolvedIp;
 bool bleStackInitialized = false;
-bool bleSuspendedForOta = false;
 
 // Perbarui indikator tanpa delay:
 // hijau tetap = Wi-Fi tersambung, hijau berkedip = mencoba Wi-Fi,
@@ -247,10 +238,12 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
 float sensorPH = 7.0;
 float sensorTDS = 0.0;
 float sensorEC = 0.0;
+float sensorTemp = 25.0;
 
 unsigned long lastSensorCheck = 0;
 float lastSentPH = -999.0;
 float lastSentTDS = -999.0;
+float lastSentTemp = -999.0;
 
 // Fungsi Membaca Nilai pH Aktual Cepat dari Sensor pH-4502C (Pin Po - GPIO 34)
 float readPHSensor() {
@@ -269,6 +262,47 @@ float readPHSensor() {
   if (calculatedPH < 0.0) calculatedPH = 0.0;
   if (calculatedPH > 14.0) calculatedPH = 14.0;
   return calculatedPH;
+}
+
+// Fungsi Membaca Nilai Suhu Aktual Cepat dari Sensor Suhu (Pin OUT - GPIO 35)
+// Sensor suhu analog linear 10mV/°C (LM35 secara default).
+// Untuk TMP36, ubah TEMP_VOLTAGE_OFFSET menjadi 0.5. Modul NTC membutuhkan
+// rumus sesuai nilai resistor/kurva modul dan tidak dapat memakai rumus ini.
+float readTempSensor() {
+  const int samples = 15;
+  int analogBuffer[15];
+
+  for (int i = 0; i < samples; i++) {
+    analogBuffer[i] = analogRead(SENSOR_TEMP_PIN);
+    delayMicroseconds(200); // Sampling instan non-blocking
+  }
+
+  // Median filtering untuk menyaring noise spike ADC
+  for (int i = 0; i < samples - 1; i++) {
+    for (int j = i + 1; j < samples; j++) {
+      if (analogBuffer[i] > analogBuffer[j]) {
+        int temp = analogBuffer[i];
+        analogBuffer[i] = analogBuffer[j];
+        analogBuffer[j] = temp;
+      }
+    }
+  }
+
+  float avgAdc = 0;
+  for (int i = 3; i < samples - 3; i++) {
+    avgAdc += analogBuffer[i];
+  }
+  avgAdc /= (samples - 6);
+
+  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
+
+  // Rumus konversi voltase ke suhu (°C)
+  float calculatedTemp = ((voltage - TEMP_VOLTAGE_OFFSET) * 100.0) + TEMP_CALIBRATION_OFFSET;
+
+  // Batas rentang realistis lingkungan fertigasi melon (0.0 °C - 60.0 °C)
+  if (calculatedTemp < 0.0) calculatedTemp = 0.0;
+  if (calculatedTemp > 60.0) calculatedTemp = 60.0;
+  return calculatedTemp;
 }
 
 // Fungsi Membaca Nilai TDS Aktual Cepat (PPM) dari Sensor TDS Meter V1.0 (Pin A - GPIO 32)
@@ -300,8 +334,9 @@ float readTDSSensor() {
 
   float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
 
-  // Kompensasi suhu larutan: fComp = 1.0 + 0.02 * (T - 25.0)
-  float compensationCoefficient = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  // Kompensasi suhu larutan dinamis dari pembacaan sensor suhu aktual: fComp = 1.0 + 0.02 * (T - 25.0)
+  float currentWaterTemp = (sensorTemp > 0.0 && sensorTemp < 60.0) ? sensorTemp : WATER_TEMP_ESTIMATE;
+  float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
   float compensationVoltage = voltage / compensationCoefficient;
 
   // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
@@ -384,176 +419,6 @@ void sendBleNotify(String message) {
     }
     Serial.printf("[BLE TX] %s\n", message.c_str());
   }
-}
-
-void sendOtaResult(const char* type, bool success, const String &message, int progress) {
-  StaticJsonDocument<384> doc;
-  doc["type"] = type;
-  doc["success"] = success;
-  doc["message"] = message;
-  doc["current_version"] = firmware_version;
-  if (otaTargetVersion.length() > 0) doc["target_version"] = otaTargetVersion;
-  if (progress >= 0) doc["progress"] = progress;
-  String output;
-  serializeJson(doc, output);
-  sendBleNotify(output);
-}
-
-void prepareSafeStateForOta() {
-  for (int i = 0; i < MAX_VALVE_TIMERS; i++) dynamicValves[i].active = false;
-  setValvePin(VALVE1_PIN, false, 0);
-  setValvePin(VALVE2_PIN, false, 0);
-  digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-  webSocket.disconnect();
-}
-
-void suspendBleForOta() {
-  if (!bleStackInitialized) return;
-  Serial.println("[OTA] Menghentikan BLE sementara untuk membebaskan RAM TLS...");
-  bleDeviceConnected = false;
-  oldBleDeviceConnected = false;
-  BLEDevice::deinit(true);
-  pBleServer = NULL;
-  pBleTxChar = NULL;
-  pBleRxChar = NULL;
-  bleStackInitialized = false;
-  bleSuspendedForOta = true;
-  delay(250);
-  Serial.printf("[OTA] BLE dihentikan. Free heap: %u byte\n", ESP.getFreeHeap());
-}
-
-void resumeBleAfterOtaFailure() {
-  if (!bleSuspendedForOta) return;
-  Serial.println("[OTA] Update gagal; mengaktifkan kembali BLE...");
-  bleSuspendedForOta = false;
-  setupBLE();
-}
-
-// Dashboard mengirim URL file hasil kompilasi (.bin), bukan source .ino.
-// File ditulis ke partisi OTA yang tidak sedang aktif lalu ESP reboot.
-void updateFirmwareFromUrl(const String &url, const String &version, const String &expectedMd5) {
-  if (otaInProgress) {
-    sendOtaResult("OTA_RESULT", false, "Update firmware lain sedang berjalan.", -1);
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    sendOtaResult("OTA_RESULT", false, "Wi-Fi harus terhubung untuk mengunduh firmware.", -1);
-    return;
-  }
-  if (!(url.startsWith("https://") || url.startsWith("http://"))) {
-    sendOtaResult("OTA_RESULT", false, "URL firmware harus menggunakan HTTP atau HTTPS.", -1);
-    return;
-  }
-
-  otaInProgress = true;
-  otaProgress = 0;
-  otaTargetVersion = version;
-  sendOtaResult("OTA_PROGRESS", true, "Menyiapkan update; Bluetooth akan terputus sementara...", 0);
-  prepareSafeStateForOta();
-  delay(350); // beri waktu notifikasi terakhir terkirim ke dashboard
-  suspendBleForOta();
-
-  HTTPClient http;
-  WiFiClient plainClient;
-  WiFiClientSecure secureClient;
-  bool begun;
-  if (url.startsWith("https://")) {
-    // Produksi: sebaiknya ganti dengan secureClient.setCACert(root_ca).
-    secureClient.setInsecure();
-    begun = http.begin(secureClient, url);
-  } else {
-    begun = http.begin(plainClient, url);
-  }
-
-  if (!begun) {
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, "Tidak dapat membuka URL firmware.", -1);
-    return;
-  }
-
-  http.setConnectTimeout(15000);
-  http.setTimeout(15000);
-  const int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_OK) {
-    String reason = "Server firmware merespons HTTP " + String(httpCode) + ".";
-    http.end();
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, reason, -1);
-    return;
-  }
-
-  const int firmwareSize = http.getSize();
-  if (firmwareSize <= 0) {
-    http.end();
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, "Server wajib mengirim Content-Length yang valid.", -1);
-    return;
-  }
-
-  if (!Update.begin((size_t)firmwareSize, U_FLASH)) {
-    String reason = "Partisi OTA tidak cukup/tidak mendukung OTA: ";
-    reason += Update.errorString();
-    http.end();
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, reason, -1);
-    return;
-  }
-
-  if (expectedMd5.length() > 0 && !Update.setMD5(expectedMd5.c_str())) {
-    Update.abort();
-    http.end();
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, "Format MD5 firmware tidak valid.", -1);
-    return;
-  }
-
-  WiFiClient *stream = http.getStreamPtr();
-  uint8_t buffer[1024];
-  size_t written = 0;
-  unsigned long lastDataAt = millis();
-
-  while (http.connected() && written < (size_t)firmwareSize) {
-    size_t available = stream->available();
-    if (available > 0) {
-      size_t toRead = min(available, sizeof(buffer));
-      int received = stream->readBytes(buffer, toRead);
-      if (received <= 0 || Update.write(buffer, received) != (size_t)received) break;
-      written += received;
-      lastDataAt = millis();
-      int progress = (int)((written * 100ULL) / (size_t)firmwareSize);
-      if (progress >= otaProgress + 5 || progress == 100) {
-        otaProgress = progress;
-        sendOtaResult("OTA_PROGRESS", true, "Firmware sedang diunduh dan ditulis...", progress);
-      }
-    } else {
-      if (millis() - lastDataAt > 15000) break;
-      delay(1);
-    }
-  }
-
-  bool success = (written == (size_t)firmwareSize) && Update.end(true) && Update.isFinished();
-  String errorMessage = Update.errorString();
-  http.end();
-  if (!success) {
-    Update.abort();
-    otaInProgress = false;
-    resumeBleAfterOtaFailure();
-    sendOtaResult("OTA_RESULT", false, "Update gagal: " + errorMessage, -1);
-    connectWebSocketServer();
-    return;
-  }
-
-  preferences.begin("fertigation", false);
-  preferences.putString("last_ota_version", version);
-  preferences.end();
-  sendOtaResult("OTA_RESULT", true, "Firmware berhasil dipasang. ESP32 akan reboot.", 100);
-  delay(1200);
-  ESP.restart();
 }
 
 // Helper to sanitize host string (strip https://, http://, wss://, ws://, trailing slash)
@@ -719,15 +584,14 @@ void sendBleStatus() {
   doc["ws_resolved_ip"] = wsResolvedIp.toString();
   doc["uptime_sec"] = millis() / 1000;
   doc["free_heap"] = ESP.getFreeHeap();
-  doc["ota_in_progress"] = otaInProgress;
-  doc["ota_progress"] = otaProgress;
 
   JsonObject valves = doc.createNestedObject("valves");
   valves["valve1"] = valve1State;
   valves["valve2"] = valve2State;
 
-  // Update pembacaan aktual sensor pH dan TDS
+  // Baca suhu sebelum TDS karena nilainya dipakai untuk kompensasi TDS.
   sensorPH = readPHSensor();
+  sensorTemp = readTempSensor();
   sensorTDS = readTDSSensor();
   sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
 
@@ -735,6 +599,7 @@ void sendBleStatus() {
   sensors["ph"] = sensorPH;
   sensors["tds"] = sensorTDS;
   sensors["ec"] = sensorEC;
+  sensors["suhu"] = sensorTemp;
 
   String output;
   serializeJson(doc, output);
@@ -1049,32 +914,6 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
 
           reconnectWebSocket();
         }
-        // 13. OTA_STATUS: status dukungan/update firmware saat ini
-        else if (cmd == "OTA_STATUS") {
-          sendOtaResult("OTA_STATUS", true, otaInProgress ? "Update sedang berjalan." : "ESP32 siap menerima update.", otaProgress);
-        }
-        // 14. OTA_UPDATE
-        // {"cmd":"OTA_UPDATE","url":"https://server/fw.bin","version":"v2.7.0","md5":"32-char-md5"}
-        else if (cmd == "OTA_UPDATE") {
-          String firmwareUrl = doc["url"].as<String>();
-          String targetVersion = doc["version"].as<String>();
-          String md5 = doc["md5"].as<String>();
-          if (firmwareUrl.length() == 0 || targetVersion.length() == 0) {
-            sendOtaResult("OTA_RESULT", false, "Parameter url dan version wajib diisi.", -1);
-          } else if (targetVersion == firmware_version) {
-            sendOtaResult("OTA_RESULT", false, "Versi tersebut sudah terpasang.", -1);
-          } else if (otaRequestPending || otaInProgress) {
-            sendOtaResult("OTA_RESULT", false, "Update firmware lain sedang berjalan.", -1);
-          } else {
-            // Jangan menjalankan HTTPS dari callback BLE. Simpan request dan
-            // jalankan dari loop utama agar BLE dapat dihentikan dengan aman.
-            otaPendingUrl = firmwareUrl;
-            otaPendingVersion = targetVersion;
-            otaPendingMd5 = md5;
-            otaRequestPending = true;
-            sendOtaResult("OTA_PROGRESS", true, "Perintah update diterima...", 0);
-          }
-        }
       }
     }
 };
@@ -1168,6 +1007,7 @@ void sendWsHeartbeat() {
 void sendWsTelemetry() {
   lastSentPH = sensorPH;
   lastSentTDS = sensorTDS;
+  lastSentTemp = sensorTemp;
 
   StaticJsonDocument<256> doc;
   doc["type"] = "TELEMETRY";
@@ -1176,12 +1016,13 @@ void sendWsTelemetry() {
   doc["ph"] = sensorPH;
   doc["tds"] = sensorTDS;
   doc["ec"] = sensorEC;
+  doc["suhu"] = sensorTemp;
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Data Aktual: pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorPH, sensorTDS, sensorEC);
+  Serial.printf("[WS Telemetry] Data Aktual: Suhu: %.1f °C (GPIO 35) | pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorTemp, sensorPH, sensorTDS, sensorEC);
 }
 
 // Send Command Completed confirmation
@@ -1317,17 +1158,6 @@ void setup() {
   Serial.printf("[ESP32] Smart Fertigation AIoT %s Starting...\n", firmware_version);
   Serial.println("=======================================================");
 
-  // Dengan rollback bootloader aktif, firmware baru baru dibuat permanen setelah
-  // berhasil hidup stabil selama 30 detik.
-  const esp_partition_t *runningPartition = esp_ota_get_running_partition();
-  esp_ota_img_states_t otaState;
-  if (esp_ota_get_state_partition(runningPartition, &otaState) == ESP_OK && otaState == ESP_OTA_IMG_PENDING_VERIFY) {
-    firmwareHealthySince = millis();
-    Serial.println("[OTA] Firmware baru dalam masa verifikasi 30 detik.");
-  } else {
-    firmwareMarkedValid = true;
-  }
-
   pinMode(VALVE1_PIN, OUTPUT);
   pinMode(VALVE2_PIN, OUTPUT);
   pinMode(ONBOARD_LED, OUTPUT);
@@ -1337,6 +1167,7 @@ void setup() {
   pinMode(STATUS_GREEN_PIN, OUTPUT);
   pinMode(SENSOR_PH_PIN, INPUT);
   pinMode(SENSOR_TDS_PIN, INPUT);
+  pinMode(SENSOR_TEMP_PIN, INPUT);
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
@@ -1419,26 +1250,6 @@ void loop() {
 
   unsigned long now = millis();
 
-  // Jalankan OTA di task loop, bukan di callback GATT/BLE.
-  if (otaRequestPending && !otaInProgress) {
-    otaRequestPending = false;
-    String url = otaPendingUrl;
-    String version = otaPendingVersion;
-    String md5 = otaPendingMd5;
-    otaPendingUrl = "";
-    otaPendingVersion = "";
-    otaPendingMd5 = "";
-    updateFirmwareFromUrl(url, version, md5);
-    return;
-  }
-
-  if (!firmwareMarkedValid && firmwareHealthySince > 0 && now - firmwareHealthySince >= 30000) {
-    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-      firmwareMarkedValid = true;
-      Serial.println("[OTA] Firmware baru sehat dan ditandai valid.");
-    }
-  }
-
   // Re-start BLE Advertising if disconnected
   if (!bleDeviceConnected && oldBleDeviceConnected) {
     delay(500); // give the bluetooth stack the chance to get things ready
@@ -1476,16 +1287,20 @@ void loop() {
   if (now - lastSensorCheck >= 800 || lastSensorCheck == 0) {
     lastSensorCheck = now;
     float curPH = readPHSensor();
+    float curTemp = readTempSensor();
+    // TDS memakai sensorTemp untuk kompensasi; perbarui lebih dahulu.
+    sensorTemp = curTemp;
     float curTDS = readTDSSensor();
 
-    // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk)
-    bool significantChange = (fabs(curPH - lastSentPH) >= 0.08) || (fabs(curTDS - lastSentTDS) >= 12.0);
+    // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / suhu berubah)
+    bool significantChange = (fabs(curPH - lastSentPH) >= 0.08) || (fabs(curTDS - lastSentTDS) >= 12.0) || (fabs(curTemp - lastSentTemp) >= 0.5);
 
     // Kirim seketika jika ada perubahan nyata (instan) ATAU interval periodik 2.5 detik
     if (significantChange || (now - lastTelemetry >= 2500) || (lastTelemetry == 0)) {
       lastTelemetry = now;
       sensorPH = curPH;
       sensorTDS = curTDS;
+      sensorTemp = curTemp;
       sensorEC = sensorTDS / 500.0;
 
       if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
