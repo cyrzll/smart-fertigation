@@ -576,7 +576,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 3: SENSOR SUHU AIR TANDON (Pin OUT - GPIO 35) */}
+          {/* Card 3: SENSOR SUHU AIR TANDON (Pin OUT - GPIO 33) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">

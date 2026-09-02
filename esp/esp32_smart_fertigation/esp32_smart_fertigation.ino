@@ -103,15 +103,15 @@ bool is_authenticated = false;
 // Pin Konfigurasi Sensor Fisik:
 //   - SENSOR_PH_PIN   : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
 //   - SENSOR_TDS_PIN  : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
-//   - SENSOR_TEMP_PIN : GPIO 35 (ADC1 ESP32) -> Pin OUT Modul Sensor Suhu [TERPASANG AKTIF]
+//   - SENSOR_TEMP_PIN : GPIO 33 (ADC1 ESP32) -> Pin OUT Modul Sensor Suhu [TERPASANG AKTIF]
 //
 // Pinout Sensor Suhu (3-Pin: +, -, OUT):
 //   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
 //   - '-'   : Ground                 -> Hubungkan ke GND ESP32
-//   - 'OUT' : Output Signal / Analog -> Hubungkan ke GPIO 35 (D35 / ADC1) ESP32
+//   - 'OUT' : Output Signal / Analog -> Hubungkan ke GPIO 33 (D33 / ADC1) ESP32
 #define SENSOR_PH_PIN          34   // Pin Po Modul Sensor pH-4502C
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
-#define SENSOR_TEMP_PIN        35   // Pin OUT Modul Sensor Suhu (GPIO 35)
+#define SENSOR_TEMP_PIN        33   // Pin OUT Modul Sensor Suhu (GPIO 33)
 
 #define PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
 #define TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS (default 1.0)
@@ -264,7 +264,7 @@ float readPHSensor() {
   return calculatedPH;
 }
 
-// Fungsi Membaca Nilai Suhu Aktual Cepat dari Sensor Suhu (Pin OUT - GPIO 35)
+// Fungsi Membaca Nilai Suhu Aktual Cepat dari Sensor Suhu (Pin OUT - GPIO 33)
 // Sensor suhu analog linear 10mV/°C (LM35 secara default).
 // Untuk TMP36, ubah TEMP_VOLTAGE_OFFSET menjadi 0.5. Modul NTC membutuhkan
 // rumus sesuai nilai resistor/kurva modul dan tidak dapat memakai rumus ini.
@@ -1022,7 +1022,7 @@ void sendWsTelemetry() {
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Data Aktual: Suhu: %.1f °C (GPIO 35) | pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorTemp, sensorPH, sensorTDS, sensorEC);
+  Serial.printf("[WS Telemetry] Data Aktual: Suhu: %.1f °C (GPIO 33) | pH: %.2f (GPIO 34) | TDS: %.0f ppm | EC: %.2f mS/cm (GPIO 32)\n", sensorTemp, sensorPH, sensorTDS, sensorEC);
 }
 
 // Send Command Completed confirmation
