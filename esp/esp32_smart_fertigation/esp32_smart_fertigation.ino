@@ -1326,8 +1326,13 @@ void sendWsTelemetry() {
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: %.1f °C | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
-                sensorTemp, sensorWaterTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+  if (sensorWaterTempValid) {
+    Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: %.1f °C | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
+                  sensorTemp, sensorWaterTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+  } else {
+    Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: DISCONNECTED (-127°C / No Pull-up) | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
+                  sensorTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+  }
 }
 
 // Send Command Completed confirmation
@@ -1615,8 +1620,12 @@ void loop() {
       Serial.printf("[SOIL Debug] Voltase AO: %.3f V (%.1f mV) | Kelembapan Media: %.1f %% | Pin DO (Digital): %s\n",
                     filteredSoilVoltage, filteredSoilVoltage * 1000.0, sensorMedia, sensorMediaDO ? "KERING (HIGH)" : "BASAH (LOW)");
     } else if (cmd == "RAW_DS18B20" || cmd == "raw_ds18b20" || cmd == "RAW_WATER" || cmd == "raw_water") {
-      Serial.printf("[DS18B20 Debug] Suhu Air Nutrisi: %.2f °C | Status: %s (Pin GPIO %d)\n",
-                    sensorWaterTemp, sensorWaterTempValid ? "VALID" : "TIDAK TERHUBUNG", SENSOR_DS18B20_PIN);
+      ds18b20.requestTemperatures();
+      float directTemp = ds18b20.getTempCByIndex(0);
+      Serial.printf("[DS18B20 Debug] Raw TempC: %.2f °C | Status: %s (Pin GPIO %d)\n",
+                    directTemp, 
+                    (directTemp != DEVICE_DISCONNECTED_C && directTemp >= -40.0 && directTemp <= 110.0 && directTemp != 85.0) ? "VALID (OK)" : "TIDAK TERHUBUNG (-127°C / Butuh Resistor Pull-up 4.7kΩ)",
+                    SENSOR_DS18B20_PIN);
     }
   }
 
