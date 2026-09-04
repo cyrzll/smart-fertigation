@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { pool } from '../db.js';
+import { isDeviceSocketConnected } from '../services/wsServer.js';
 const app = new Hono();
 function jakartaDate() {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -84,6 +85,14 @@ app.get('/', async (c) => {
        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d'), HOUR(created_at)
        ORDER BY day DESC, hour ASC`);
+        // Ambil data perangkat ESP32 dan status konektivitas realtime
+        const [devices] = await pool.query('SELECT id, name, device_code, serial_code, status, last_seen FROM devices ORDER BY (status = "verified") DESC, (user_id IS NOT NULL) DESC, id ASC');
+        const mappedDevices = devices.map((d) => {
+            const isOnlineWs = isDeviceSocketConnected(d.device_code, d.serial_code);
+            const lastSeenDate = d.last_seen ? new Date(d.last_seen).getTime() : 0;
+            const is_online = isOnlineWs || (Date.now() - lastSeenDate < 60000);
+            return { ...d, is_online };
+        });
         return c.json({
             success: true,
             planting: planting
@@ -102,6 +111,8 @@ app.get('/', async (c) => {
             latestTelemetry,
             recentTelemetries: recentTelemetries || [],
             hourlyTelemetries: hourlyTelemetries || [],
+            devices: mappedDevices,
+            primaryDevice: mappedDevices[0] || null,
         });
     }
     catch (err) {

@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Sprout, Calendar, Clock, Cpu, ArrowRight, RefreshCw, CheckCircle2, 
   Layers, Droplets, Activity, Thermometer, Wind, Gauge, ShieldCheck, 
-  AlertTriangle, Sparkles, TrendingUp
+  AlertTriangle, Sparkles, TrendingUp, Wifi, WifiOff
 } from 'lucide-react';
 import { actions } from 'astro:actions';
 import {
@@ -200,6 +200,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
   const [isLiveWs, setIsLiveWs] = useState(false);
   const [liveTelemetry, setLiveTelemetry] = useState(null);
   const [selectedChartDay, setSelectedChartDay] = useState(null);
+  const [wsOnlineDevices, setWsOnlineDevices] = useState(new Set());
 
   const fetchDashboardData = async (isManual = false) => {
     try {
@@ -281,7 +282,25 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
         ws.onmessage = (e) => {
           try {
             const msg = JSON.parse(e.data);
-            if (msg.type === 'SENSOR_TELEMETRY' && msg.telemetry) {
+            if (msg.type === 'DEVICES_ONLINE_SNAPSHOT') {
+              setWsOnlineDevices(new Set(msg.online_devices || []));
+            } else if (msg.type === 'DEVICE_STATUS') {
+              setWsOnlineDevices((prev) => {
+                const next = new Set(prev);
+                if (msg.is_online) {
+                  if (msg.device_code) next.add(msg.device_code);
+                  if (msg.serial_code) next.add(msg.serial_code);
+                } else {
+                  if (msg.device_code) next.delete(msg.device_code);
+                  if (msg.serial_code) next.delete(msg.serial_code);
+                }
+                return next;
+              });
+
+              if (msg.telemetry) {
+                setLiveTelemetry(msg.telemetry);
+              }
+            } else if (msg.type === 'SENSOR_TELEMETRY' && msg.telemetry) {
               setLiveTelemetry(msg.telemetry);
               // Tambahkan rekaman baru ke riwayat tabel secara instan
               setData((prev) => {
@@ -301,8 +320,6 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   recentTelemetries: [newRec, ...uniqueExisting].slice(0, 15),
                 };
               });
-            } else if (msg.type === 'DEVICE_STATUS' && msg.telemetry) {
-              setLiveTelemetry(msg.telemetry);
             }
           } catch (_) {}
         };
@@ -333,6 +350,24 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
   const tdsVal = currentTelemetry.tds != null && !isNaN(Number(currentTelemetry.tds)) ? Number(currentTelemetry.tds) : (currentTelemetry.ec != null ? Number(currentTelemetry.ec) * 500.0 : null);
   const ecVal = currentTelemetry.ec != null && !isNaN(Number(currentTelemetry.ec)) ? Number(currentTelemetry.ec) : (tdsVal != null ? tdsVal / 500.0 : null);
   const suhuVal = currentTelemetry.suhu != null && !isNaN(Number(currentTelemetry.suhu)) ? Number(currentTelemetry.suhu) : null;
+
+  // Deteksi status koneksi ESP32 (realtime WebSocket, DB device status, atau usia telemetri terakhir)
+  const isEspOnline = useMemo(() => {
+    if (data?.devices && data.devices.length > 0) {
+      const foundOnline = data.devices.some((d) => 
+        (d.device_code && wsOnlineDevices.has(d.device_code)) ||
+        (d.serial_code && wsOnlineDevices.has(d.serial_code)) ||
+        Boolean(d.is_online)
+      );
+      if (foundOnline) return true;
+    }
+    if (wsOnlineDevices.size > 0) return true;
+    if (currentTelemetry?.created_at) {
+      const ageSec = (Date.now() - new Date(currentTelemetry.created_at).getTime()) / 1000;
+      if (ageSec < 45) return true;
+    }
+    return false;
+  }, [data?.devices, wsOnlineDevices, currentTelemetry]);
 
   const getHumidityStatus = (humidity) => {
     if (humidity == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
@@ -407,7 +442,24 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
           </p>
         </div>
 
-        <div className="flex items-center space-x-2.5">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+          {/* Status ESP32 Online / Offline */}
+          <div
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold shadow-xs transition-colors ${
+              isEspOnline
+                ? 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]'
+                : 'bg-red-50 text-red-700 border-red-200'
+            }`}
+          >
+            {isEspOnline ? (
+              <Wifi className="w-3.5 h-3.5 text-[#5A8A3A]" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5 text-red-600" />
+            )}
+            <span className={`w-2 h-2 rounded-full ${isEspOnline ? 'bg-[#7BAF5A] animate-pulse' : 'bg-red-500'}`} />
+            <span>{isEspOnline ? 'ESP32 Online' : 'ESP32 Offline'}</span>
+          </div>
+
           <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-[#D4DFC8] bg-white text-xs font-semibold shadow-xs">
             <span className={`w-2 h-2 rounded-full ${isLiveWs ? 'bg-[#7BAF5A] animate-pulse' : 'bg-slate-400'}`} />
             <span className={isLiveWs ? 'text-[#3A6B2A]' : 'text-slate-500'}>
@@ -445,13 +497,28 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             <span>Monitoring sensor sedang dinonaktifkan melalui Pengaturan.</span>
           </div>
         )}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Activity className="w-4 h-4 text-[#7BAF5A]" />
-            <h3 className="text-sm font-bold text-[#2D3B2D] uppercase tracking-wider">
-              Data Sensor Terkini
-            </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 mb-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <div className="flex items-center space-x-2">
+              <Activity className="w-4 h-4 text-[#7BAF5A]" />
+              <h3 className="text-sm font-bold text-[#2D3B2D] uppercase tracking-wider">
+                Data Sensor Terkini
+              </h3>
+            </div>
+
+            {/* Badge ESP32 Online / Offline Status */}
+            <span
+              className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border transition-colors ${
+                isEspOnline
+                  ? 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]'
+                  : 'bg-red-50 text-red-700 border-red-200'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${isEspOnline ? 'bg-[#7BAF5A] animate-pulse' : 'bg-red-500'}`} />
+              <span>{isEspOnline ? 'ESP32 ONLINE' : 'ESP32 OFFLINE'}</span>
+            </span>
           </div>
+
           <span className="text-[11px] text-[#8A9B7A] font-mono">
             {currentTelemetry.created_at ? `Update: ${formatWibTime(currentTelemetry.created_at)}` : 'Sinkronisasi Otomatis'}
           </span>

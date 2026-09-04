@@ -138,9 +138,9 @@ bool is_authenticated = false;
 // Faktor Kalibrasi Aktif (Disimpan & Dimuat dari Flash NVS)
 float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
 
-// Logika Relay Valve (Active-High: HIGH = Valve Terbuka / ON, LOW = Valve Tertutup / OFF)
-#define RELAY_OPEN_STATE   HIGH  // Sinyal HIGH (3.3V) untuk mengaktifkan relay / membuka valve
-#define RELAY_CLOSE_STATE  LOW   // Sinyal LOW (0V) untuk mematikan relay / menutup valve (Standby saat boot)
+// Logika Relay Valve (Active-LOW: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
+#define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
+#define RELAY_CLOSE_STATE  HIGH  // Sinyal HIGH (3.3V) untuk mematikan relay / menutup valve (Standby saat boot)
 
 // Logika LED (Active-High: HIGH = Menyala, LOW = Mati)
 #define LED_ON_STATE       HIGH
@@ -1308,12 +1308,12 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 // Setup
 // =================================================================================
 void setup() {
-  // Inisialisasi awal hardware instan: Kunci semua pin valve ke kondisi TERTUTUP/MATI (LOW / 0V)
+  // Inisialisasi awal hardware instan: Kunci semua pin valve ke kondisi TERTUTUP/MATI (HIGH / 3.3V untuk Active-LOW relay)
   // Dilakukan pada baris pertama sebelum delay agar tidak ada lonjakan (glitch) saat boot
   pinMode(VALVE1_PIN, OUTPUT);
   pinMode(VALVE2_PIN, OUTPUT);
-  digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE); // LOW (0V)
-  digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE); // LOW (0V)
+  digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE); // HIGH (Standby Relay OFF)
+  digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE); // HIGH (Standby Relay OFF)
 
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);

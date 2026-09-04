@@ -115,11 +115,16 @@ app.post('/command', async (c) => {
       completed_at: wsSent ? null : new Date().toISOString(),
     });
 
+    const actionLabel = (command === 'CLOSE')
+      ? 'Tutup Valve'
+      : (durSec > 0 ? `Buka Valve (${durSec} Detik)` : 'Buka Valve');
+
+    const successMessage = `Perintah ${actionLabel} untuk "${valve.name}" berhasil dikirim ke ESP32 secara instan!`;
+    const offlineMessage = `Perintah ${actionLabel} tercatat, namun ESP32 saat ini sedang offline.`;
+
     return c.json({
       success: true,
-      message: wsSent
-        ? `Perintah ${command} berhasil dikirim ke ESP32 secara instan via WebSocket!`
-        : `Perintah ${command} tercatat, namun ESP32 saat ini offline.`,
+      message: wsSent ? successMessage : offlineMessage,
       id: cmdId,
       ws_sent: wsSent,
     });
