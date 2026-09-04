@@ -545,11 +545,11 @@ bool syncClockForTls() {
   return true;
 }
 
+bool wsInitialized = false;
+
 // Connect WebSocket with current API URL (supports both WS and Secure WSS/SSL)
 void connectWebSocketServer() {
   if (WiFi.status() == WL_CONNECTED && ws_host_str.length() > 0) {
-    webSocket.disconnect();
-
     String cleanHost = sanitizeHostString(ws_host_str);
     String wsUrl = "/ws/device?device_code=" + String(device_code) + 
                    "&serial_code=" + String(serial_code) + 
@@ -583,6 +583,7 @@ void connectWebSocketServer() {
     webSocket.onEvent(webSocketEvent);
     webSocket.setReconnectInterval(2500);
     webSocket.enableHeartbeat(20000, 8000, 3);
+    wsInitialized = true;
   }
 }
 
@@ -620,6 +621,8 @@ void resetApiUrl() {
 
 // Reconnect WebSocket with current API URL
 void reconnectWebSocket() {
+  webSocket.disconnect();
+  wsInitialized = false;
   connectWebSocketServer();
 }
 
@@ -1443,15 +1446,12 @@ void loop() {
     }
   }
 
-  // Auto-retry inisialisasi WebSocket jika Wi-Fi sudah tersambung tetapi WS belum aktif
-  static unsigned long lastWsRetry = 0;
-  if (WiFi.status() == WL_CONNECTED && !webSocket.isConnected()) {
-    if (now - lastWsRetry >= 10000 || lastWsRetry == 0) {
-      lastWsRetry = now;
-      if (wsDiagnostic == "NTP_FAILED" || wsDiagnostic == "NOT_CONNECTED" || wsDiagnostic == "DNS_FAILED" || wsDiagnostic == "DISCONNECTED_RETRYING") {
-        Serial.println("[WS] Mencoba inisialisasi ulang koneksi WebSocket...");
-        connectWebSocketServer();
-      }
+  // Inisialisasi WebSocket jika Wi-Fi baru tersambung dan WS belum pernah diinisialisasi
+  if (WiFi.status() == WL_CONNECTED && !wsInitialized) {
+    static unsigned long lastWsInitRetry = 0;
+    if (now - lastWsInitRetry >= 4000 || lastWsInitRetry == 0) {
+      lastWsInitRetry = now;
+      connectWebSocketServer();
     }
   }
 
