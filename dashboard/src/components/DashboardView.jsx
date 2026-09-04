@@ -573,9 +573,9 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           
-          {/* Card 1: KELEMBAPAN UDARA DHT22 (GPIO 33, satu sensor dengan suhu) */}
+          {/* Card 1: KELEMBAPAN UDARA DHT22 (GPIO 33) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -583,19 +583,19 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Wind className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Kelembapan Udara DHT22</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Pin DATA (GPIO 33)</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Kelembapan Udara</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">DHT22 (Pin D33)</p>
                 </div>
               </div>
 
-              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${humidityStatus.color}`}>
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${humidityStatus.color}`}>
                 <span className={`w-2 h-2 rounded-full ${humidityStatus.dot}`} />
                 <span>{humidityStatus.label}</span>
               </span>
             </div>
 
             <div className="flex items-baseline space-x-2 my-2">
-              <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
+              <span className="text-3xl sm:text-4xl font-black text-[#2D3B2D] font-mono tracking-tight">
                 {humidityVal !== null ? humidityVal.toFixed(1) : '—'}
               </span>
               {humidityVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">%</span>}
@@ -603,14 +603,14 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
 
             {/* Visual Gauge Bar Kelembapan Udara 0 - 100% */}
             <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
-              <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
+              <div className="flex justify-between text-[10px] font-mono text-[#8A9B7A] mb-1.5">
                 <span className="text-amber-700 font-semibold">0%</span>
-                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-1.5 py-0.5 rounded border border-[#C8D9B0]">
                   Ideal: 50 - 85%
                 </span>
                 <span className="text-blue-700 font-semibold">100%</span>
               </div>
-              <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+              <div className="w-full h-2.5 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
                 {/* Target optimal range indicator */}
                 <div 
                   className="absolute left-[50%] w-[35%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
@@ -637,27 +637,27 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Layers className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Kelembapan Media Tanam</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Pin AO (D34) & DO (D35)</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Media Tanam</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">Pin AO (D34) & DO</p>
                 </div>
               </div>
 
-              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${mediaStatus.color}`}>
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${mediaStatus.color}`}>
                 <span className={`w-2 h-2 rounded-full ${mediaStatus.dot}`} />
                 <span>{mediaStatus.label}</span>
               </span>
             </div>
 
-            <div className="flex flex-wrap items-baseline gap-2.5 my-2">
+            <div className="flex flex-wrap items-baseline gap-2 my-2">
               <div className="flex items-baseline space-x-1.5">
-                <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                <span className="text-3xl sm:text-4xl font-black text-[#2D3B2D] font-mono tracking-tight">
                   {mediaVal !== null ? mediaVal.toFixed(1) : '—'}
                 </span>
                 {mediaVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">%</span>}
               </div>
 
               {mediaDO && (
-                <div className={`px-2.5 py-1 rounded-lg border font-mono text-xs font-bold ${
+                <div className={`px-2 py-0.5 rounded border font-mono text-[11px] font-bold ${
                   mediaDO === 'BASAH'
                     ? 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]'
                     : 'bg-amber-50 text-amber-700 border-amber-300'
@@ -669,14 +669,14 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
 
             {/* Visual Gauge Bar Kelembapan Media 0 - 100% */}
             <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
-              <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
+              <div className="flex justify-between text-[10px] font-mono text-[#8A9B7A] mb-1.5">
                 <span className="text-amber-700 font-semibold">0%</span>
-                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-1.5 py-0.5 rounded border border-[#C8D9B0]">
                   Target: 40 - 75%
                 </span>
                 <span className="text-blue-700 font-semibold">100%</span>
               </div>
-              <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+              <div className="w-full h-2.5 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
                 {/* Target optimal range indicator (40% - 75%) */}
                 <div 
                   className="absolute left-[40%] w-[35%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
@@ -695,7 +695,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 3: SENSOR TDS & EC NUTRISI (TDS Meter V1.0 - GPIO 32 & DS18B20 Suhu Air - GPIO 19) */}
+          {/* Card 3: SENSOR TDS & EC NUTRISI (TDS Meter V1.0 - GPIO 32) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -703,48 +703,42 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Gauge className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor TDS & EC Nutrisi</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Konsentrasi nutrisi & suhu air</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">TDS & EC Nutrisi</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">Pin A (GPIO 32)</p>
                 </div>
               </div>
 
-              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${tdsStatus.color}`}>
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${tdsStatus.color}`}>
                 <span className={`w-2 h-2 rounded-full ${tdsStatus.dot}`} />
                 <span>{tdsStatus.label}</span>
               </span>
             </div>
 
-            <div className="flex flex-wrap items-baseline gap-2.5 my-2">
+            <div className="flex flex-wrap items-baseline gap-2 my-2">
               <div className="flex items-baseline space-x-1.5">
-                <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                <span className="text-3xl sm:text-4xl font-black text-[#2D3B2D] font-mono tracking-tight">
                   {tdsVal !== null ? Math.round(tdsVal) : '—'}
                 </span>
                 {tdsVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">PPM</span>}
               </div>
 
               {ecVal !== null && (
-                <div className="px-2.5 py-1 rounded-lg bg-[#FAFAF7] border border-[#D4DFC8] font-mono text-xs font-bold text-[#3A6B2A]">
-                  ~{ecVal.toFixed(2)} mS/cm EC
-                </div>
-              )}
-
-              {suhuAirVal !== null && (
-                <div className="px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200 font-mono text-xs font-bold text-sky-700" title="Suhu Air Nutrisi DS18B20 (GPIO 19)">
-                  Air: {suhuAirVal.toFixed(1)} °C
+                <div className="px-2 py-0.5 rounded border border-[#D4DFC8] bg-[#FAFAF7] font-mono text-[11px] font-bold text-[#3A6B2A]">
+                  ~{ecVal.toFixed(2)} mS
                 </div>
               )}
             </div>
 
             {/* Visual Gauge Bar Rentang TDS 0 - 2000 PPM */}
             <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
-              <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
-                <span className="text-slate-500">0 PPM</span>
-                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
+              <div className="flex justify-between text-[10px] font-mono text-[#8A9B7A] mb-1.5">
+                <span className="text-slate-500">0</span>
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-1.5 py-0.5 rounded border border-[#C8D9B0]">
                   Melon: 800 - 1400
                 </span>
                 <span className="text-red-700 font-semibold">2000</span>
               </div>
-              <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+              <div className="w-full h-2.5 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
                 {/* Target optimal range indicator (800 - 1400 / 2000 = 40% - 70%) */}
                 <div
                   className="absolute left-[40%] w-[30%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
@@ -763,7 +757,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 4: SENSOR SUHU LINGKUNGAN & SUHU AIR (DHT22: GPIO 33 & DS18B20: GPIO 19) */}
+          {/* Card 4: SENSOR SUHU UDARA LINGKUNGAN (DHT22 - Pin OUT GPIO 33) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -771,42 +765,34 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Thermometer className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Suhu Udara & Air</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">DHT22 (D33) & DS18B20 (D19)</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Suhu Udara</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">DHT22 (Pin D33)</p>
                 </div>
               </div>
 
-              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${suhuStatus.color}`}>
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${suhuStatus.color}`}>
                 <span className={`w-2 h-2 rounded-full ${suhuStatus.dot}`} />
                 <span>{suhuStatus.label}</span>
               </span>
             </div>
 
-            <div className="flex flex-wrap items-baseline gap-2.5 my-2">
-              <div className="flex items-baseline space-x-1.5">
-                <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
-                  {suhuVal !== null ? suhuVal.toFixed(1) : '—'}
-                </span>
-                {suhuVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">°C</span>}
-              </div>
-
-              {suhuAirVal !== null && (
-                <div className="px-2.5 py-1 rounded-lg bg-[#E8F2DF] border border-[#C8D9B0] font-mono text-xs font-bold text-[#3A6B2A]" title="Suhu Air Nutrisi DS18B20">
-                  Air: {suhuAirVal.toFixed(1)} °C
-                </div>
-              )}
+            <div className="flex items-baseline space-x-2 my-2">
+              <span className="text-3xl sm:text-4xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                {suhuVal !== null ? suhuVal.toFixed(1) : '—'}
+              </span>
+              {suhuVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">°C</span>}
             </div>
 
-            {/* Visual Gauge Bar Rentang Suhu 0 - 50 °C */}
+            {/* Visual Gauge Bar Rentang Suhu Udara 0 - 50 °C */}
             <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
-              <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
+              <div className="flex justify-between text-[10px] font-mono text-[#8A9B7A] mb-1.5">
                 <span className="text-blue-600 font-semibold">0°C</span>
-                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-1.5 py-0.5 rounded border border-[#C8D9B0]">
                   Ideal: 20 - 30 °C
                 </span>
                 <span className="text-red-600 font-semibold">50°C</span>
               </div>
-              <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+              <div className="w-full h-2.5 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
                 {/* Target optimal range indicator (20 - 30 / 50 = 40% - 60%) */}
                 <div
                   className="absolute left-[40%] w-[20%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
@@ -819,6 +805,60 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                       suhuVal < 20 ? 'bg-blue-500' : suhuVal <= 30 ? 'bg-[#7BAF5A]' : 'bg-red-500'
                     }`}
                     style={{ width: `${Math.min(100, Math.max(4, (suhuVal / 50) * 100))}%` }}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Card 5: SENSOR SUHU AIR NUTRISI (DS18B20 Waterproof - Pin DATA GPIO 19) */}
+          <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-200">
+                  <Droplets className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Suhu Air Nutrisi</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">DS18B20 (Pin D19)</p>
+                </div>
+              </div>
+
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${suhuAirStatus.color}`}>
+                <span className={`w-2 h-2 rounded-full ${suhuAirStatus.dot}`} />
+                <span>{suhuAirStatus.label}</span>
+              </span>
+            </div>
+
+            <div className="flex items-baseline space-x-2 my-2">
+              <span className="text-3xl sm:text-4xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                {suhuAirVal !== null ? suhuAirVal.toFixed(1) : '—'}
+              </span>
+              {suhuAirVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">°C</span>}
+            </div>
+
+            {/* Visual Gauge Bar Rentang Suhu Air 0 - 40 °C */}
+            <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
+              <div className="flex justify-between text-[10px] font-mono text-[#8A9B7A] mb-1.5">
+                <span className="text-blue-600 font-semibold">0°C</span>
+                <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-1.5 py-0.5 rounded border border-[#C8D9B0]">
+                  Target: 20 - 26 °C
+                </span>
+                <span className="text-amber-700 font-semibold">40°C</span>
+              </div>
+              <div className="w-full h-2.5 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
+                {/* Target optimal range indicator (20 - 26 / 40 = 50% - 65%) */}
+                <div
+                  className="absolute left-[50%] w-[15%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
+                  title="Rentang suhu air nutrisi ideal (20 - 26 °C)"
+                />
+                {/* Current Value Marker */}
+                {suhuAirVal !== null && (
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      suhuAirVal < 18 ? 'bg-blue-500' : suhuAirVal <= 26 ? 'bg-[#7BAF5A]' : 'bg-amber-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(4, (suhuAirVal / 40) * 100))}%` }}
                   />
                 )}
               </div>
