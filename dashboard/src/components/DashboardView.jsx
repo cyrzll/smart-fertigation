@@ -80,7 +80,7 @@ const formatChartDay = (day) => {
 };
 
 const HourlyComparisonChart = ({ rows }) => {
-  if (!rows.some((row) => row.ph !== null || row.tds !== null || row.suhu !== null)) {
+  if (!rows.some((row) => row.kelembaban !== null || row.tds !== null || row.suhu !== null)) {
     return <div className="h-56 flex items-center justify-center text-xs text-[#8A9B7A]">Belum ada data per jam pada hari ini.</div>;
   }
 
@@ -88,11 +88,11 @@ const HourlyComparisonChart = ({ rows }) => {
     labels: rows.map((row) => `${String(row.hour).padStart(2, '0')}:00`),
     datasets: [
       {
-        label: 'Rata-rata pH',
-        data: rows.map((row) => row.ph),
+        label: 'Rata-rata Kelembapan',
+        data: rows.map((row) => row.kelembaban),
         borderColor: '#5A8A3A',
         backgroundColor: '#5A8A3A',
-        yAxisID: 'yPh',
+        yAxisID: 'yHumidity',
         tension: 0.35,
         spanGaps: true,
         pointRadius: 3.5,
@@ -140,7 +140,7 @@ const HourlyComparisonChart = ({ rows }) => {
         callbacks: {
           label: (context) => {
             if (context.raw == null) return null;
-            if (context.dataset.yAxisID === 'yPh') return ` pH: ${Number(context.raw).toFixed(2)}`;
+            if (context.dataset.yAxisID === 'yHumidity') return ` Kelembapan: ${Number(context.raw).toFixed(1)} %`;
             if (context.dataset.yAxisID === 'yTds') return ` TDS: ${Math.round(Number(context.raw))} PPM`;
             return ` Suhu: ${Number(context.raw).toFixed(1)} °C`;
           },
@@ -157,14 +157,14 @@ const HourlyComparisonChart = ({ rows }) => {
         ticks: { color: '#8A9B7A', font: { size: 10 }, maxRotation: 0 },
         title: { display: true, text: 'Jam (WIB)', color: '#8A9B7A', font: { size: 11 } },
       },
-      yPh: {
+      yHumidity: {
         type: 'linear',
         position: 'left',
         min: 0,
-        max: 14,
+        max: 100,
         grid: { color: '#E8EDE0', borderDash: [4, 4] },
         ticks: { color: '#5A8A3A', font: { size: 10 } },
-        title: { display: true, text: 'pH', color: '#5A8A3A', font: { size: 11, weight: 'bold' } },
+        title: { display: true, text: 'Kelembapan (%)', color: '#5A8A3A', font: { size: 11, weight: 'bold' } },
       },
       yTds: {
         type: 'linear',
@@ -187,7 +187,7 @@ const HourlyComparisonChart = ({ rows }) => {
   return (
     <div className="overflow-x-auto">
       <div className="h-72 min-w-[720px]">
-        <Line data={chartData} options={chartOptions} aria-label="Grafik perbandingan rata-rata pH, TDS, dan suhu per jam" />
+        <Line data={chartData} options={chartOptions} aria-label="Grafik perbandingan rata-rata kelembapan, TDS, dan suhu per jam" />
       </div>
     </div>
   );
@@ -329,17 +329,16 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
 
   const currentTelemetry = liveTelemetry || data?.latestTelemetry || {};
 
-  const phVal = currentTelemetry.ph != null && !isNaN(Number(currentTelemetry.ph)) ? Number(currentTelemetry.ph) : null;
+  const humidityVal = currentTelemetry.kelembaban != null && !isNaN(Number(currentTelemetry.kelembaban)) ? Number(currentTelemetry.kelembaban) : null;
   const tdsVal = currentTelemetry.tds != null && !isNaN(Number(currentTelemetry.tds)) ? Number(currentTelemetry.tds) : (currentTelemetry.ec != null ? Number(currentTelemetry.ec) * 500.0 : null);
   const ecVal = currentTelemetry.ec != null && !isNaN(Number(currentTelemetry.ec)) ? Number(currentTelemetry.ec) : (tdsVal != null ? tdsVal / 500.0 : null);
   const suhuVal = currentTelemetry.suhu != null && !isNaN(Number(currentTelemetry.suhu)) ? Number(currentTelemetry.suhu) : null;
 
-  // Status helper untuk nilai pH
-  const getPhStatus = (ph) => {
-    if (ph == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
-    if (ph < 5.5) return { label: 'Asam (Rendah)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
-    if (ph <= 6.8) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
-    return { label: 'Basa (Tinggi)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
+  const getHumidityStatus = (humidity) => {
+    if (humidity == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
+    if (humidity < 50) return { label: 'Kering (Rendah)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
+    if (humidity <= 85) return { label: 'Ideal (Optimal)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
+    return { label: 'Lembap (Tinggi)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
   };
 
   // Status helper untuk nilai TDS / EC Nutrisi
@@ -358,7 +357,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
     return { label: 'Hangat (Tinggi)', color: 'bg-red-50 text-red-700 border-red-300', dot: 'bg-red-500' };
   };
 
-  const phStatus = getPhStatus(phVal);
+  const humidityStatus = getHumidityStatus(humidityVal);
   const tdsStatus = getTdsStatus(tdsVal);
   const suhuStatus = getSuhuStatus(suhuVal);
 
@@ -383,13 +382,13 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
         .filter((row) => row.day === activeChartDay)
         .map((row) => [Number(row.hour), {
           hour: Number(row.hour),
-          ph: row.avg_ph != null && !isNaN(Number(row.avg_ph)) ? Number(row.avg_ph) : null,
+          kelembaban: row.avg_kelembaban != null && !isNaN(Number(row.avg_kelembaban)) ? Number(row.avg_kelembaban) : null,
           tds: row.avg_tds != null && !isNaN(Number(row.avg_tds)) ? Number(row.avg_tds) : null,
           suhu: row.avg_suhu != null && !isNaN(Number(row.avg_suhu)) ? Number(row.avg_suhu) : null,
           samples: Number(row.sample_count) || 0,
         }])
     );
-    return Array.from({ length: 24 }, (_, hour) => rowsByHour.get(hour) || { hour, ph: null, tds: null, suhu: null, samples: 0 });
+    return Array.from({ length: 24 }, (_, hour) => rowsByHour.get(hour) || { hour, kelembaban: null, tds: null, suhu: null, samples: 0 });
   }, [data?.hourlyTelemetries, activeChartDay]);
 
   return (
@@ -404,7 +403,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
         <div>
           <h2 className="text-xl font-bold text-[#2D3B2D]">Dashboard Monitoring</h2>
           <p className="text-xs text-[#8A9B7A] mt-0.5">
-            Pemantauan telemetri suhu, pH, TDS nutrisi, dan jadwal fertigasi realtime
+            Pemantauan suhu, kelembapan udara, TDS nutrisi, dan jadwal fertigasi realtime
           </p>
         </div>
 
@@ -437,7 +436,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
       )}
 
       {/* ========================================================================= */}
-      {/* REAL-TIME SENSOR TELEMETRY (SUHU, pH AIR & TDS NUTRISI)                   */}
+      {/* REAL-TIME SENSOR TELEMETRY (SUHU, KELEMBAPAN UDARA & TDS NUTRISI)         */}
       {/* ========================================================================= */}
       <div className={`relative transition-opacity duration-300 ${sensorsEnabled ? 'opacity-100' : 'opacity-45'}`} aria-disabled={!sensorsEnabled}>
         {!sensorsEnabled && (
@@ -460,54 +459,54 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           
-          {/* Card 1: SENSOR pH AIR (Modul pH-4502C - GPIO 34) */}
+          {/* Card 1: KELEMBAPAN UDARA DHT22 (GPIO 33, satu sensor dengan suhu) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
                 <div className="p-2.5 rounded-xl bg-[#E8F2DF] text-[#7BAF5A] border border-[#C8D9B0]">
-                  <Droplets className="w-5 h-5" />
+                  <Wind className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor pH Air Tandon</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Tingkat keasaman air</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Kelembapan Udara DHT22</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">Dari sensor yang sama dengan suhu</p>
                 </div>
               </div>
 
-              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${phStatus.color}`}>
-                <span className={`w-2 h-2 rounded-full ${phStatus.dot}`} />
-                <span>{phStatus.label}</span>
+              <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${humidityStatus.color}`}>
+                <span className={`w-2 h-2 rounded-full ${humidityStatus.dot}`} />
+                <span>{humidityStatus.label}</span>
               </span>
             </div>
 
             <div className="flex items-baseline space-x-2 my-2">
               <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
-                {phVal !== null ? phVal.toFixed(2) : '—'}
+                {humidityVal !== null ? humidityVal.toFixed(1) : '—'}
               </span>
-              {phVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">pH</span>}
+              {humidityVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">%</span>}
             </div>
 
-            {/* Visual Gauge Bar Rentang pH 0 - 14 */}
+            {/* Visual Gauge Bar Kelembapan 0 - 100% */}
             <div className="mt-4 pt-3 border-t border-[#E8EDE0]">
               <div className="flex justify-between text-[11px] font-mono text-[#8A9B7A] mb-1.5">
-                <span className="text-amber-700 font-semibold">0 (Asam)</span>
+                <span className="text-amber-700 font-semibold">0% (Kering)</span>
                 <span className="font-bold text-[#3A6B2A] bg-[#E8F2DF] px-2 py-0.5 rounded-md border border-[#C8D9B0]">
-                  Target Ideal: 5.50 - 6.50
+                  Target Ideal: 50 - 85%
                 </span>
-                <span className="text-blue-700 font-semibold">14 (Basa)</span>
+                <span className="text-blue-700 font-semibold">100% (Lembap)</span>
               </div>
               <div className="w-full h-3 bg-[#FAFAF7] border border-[#D4DFC8] rounded-full overflow-hidden relative">
                 {/* Target optimal range indicator */}
                 <div 
-                  className="absolute left-[39.2%] w-[7.2%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]" 
-                  title="Rentang Optimal Tanaman (5.5 - 6.5)" 
+                  className="absolute left-[50%] w-[35%] h-full bg-[#7BAF5A]/30 border-x-2 border-[#7BAF5A]"
+                  title="Rentang kelembapan udara ideal (50 - 85%)"
                 />
                 {/* Current Value Marker */}
-                {phVal !== null && (
+                {humidityVal !== null && (
                   <div 
                     className={`h-full rounded-full transition-all duration-500 ${
-                      phVal < 5.5 ? 'bg-amber-500' : phVal <= 6.8 ? 'bg-[#7BAF5A]' : 'bg-blue-600'
+                      humidityVal < 50 ? 'bg-amber-500' : humidityVal <= 85 ? 'bg-[#7BAF5A]' : 'bg-blue-600'
                     }`} 
-                    style={{ width: `${Math.min(100, Math.max(4, (phVal / 14) * 100))}%` }} 
+                    style={{ width: `${Math.min(100, Math.max(4, humidityVal))}%` }}
                   />
                 )}
               </div>
@@ -728,7 +727,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
       </div>
 
       {/* ========================================================================= */}
-      {/* RIWAYAT PENCATATAN TELEMETRI SENSOR BERKALA (pH & TDS)                    */}
+      {/* RIWAYAT PENCATATAN TELEMETRI SENSOR BERKALA                              */}
       {/* ========================================================================= */}
       <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-xs space-y-3.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#E8EDE0]">
@@ -737,7 +736,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
               <TrendingUp className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#2D3B2D]">Riwayat Pemantauan Sensor pH & TDS Berkala</h3>
+              <h3 className="text-sm font-bold text-[#2D3B2D]">Riwayat Suhu, Kelembapan & TDS</h3>
               <p className="text-[11px] text-[#8A9B7A]">Satu status terbaru per menit dari ESP32</p>
             </div>
           </div>
@@ -756,8 +755,8 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                 <th className="py-2.5 px-3 rounded-l-lg">Waktu (WIB)</th>
                 <th className="py-2.5 px-3">Sensor Suhu</th>
                 <th className="py-2.5 px-3">Status Suhu</th>
-                <th className="py-2.5 px-3">Sensor pH Air</th>
-                <th className="py-2.5 px-3">Status pH</th>
+                <th className="py-2.5 px-3">Kelembapan Udara</th>
+                <th className="py-2.5 px-3">Status Kelembapan</th>
                 <th className="py-2.5 px-3">Sensor TDS / EC</th>
                 <th className="py-2.5 px-3">Status Nutrisi</th>
                 <th className="py-2.5 px-3">Perangkat</th>
@@ -767,11 +766,11 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             <tbody className="divide-y divide-[#E8EDE0]">
               {minuteTelemetries.length > 0 ? (
                 minuteTelemetries.map((row, idx) => {
-                  const rowPh = row.ph != null && !isNaN(Number(row.ph)) ? Number(row.ph) : null;
+                  const rowHumidity = row.kelembaban != null && !isNaN(Number(row.kelembaban)) ? Number(row.kelembaban) : null;
                   const rowTds = row.tds != null && !isNaN(Number(row.tds)) ? Number(row.tds) : (row.ec != null ? Number(row.ec) * 500 : null);
                   const rowEc = row.ec != null && !isNaN(Number(row.ec)) ? Number(row.ec) : (rowTds != null ? rowTds / 500 : null);
                   const rowSuhu = row.suhu != null && !isNaN(Number(row.suhu)) ? Number(row.suhu) : null;
-                  const stPh = getPhStatus(rowPh);
+                  const stHumidity = getHumidityStatus(rowHumidity);
                   const stTds = getTdsStatus(rowTds);
                   const stSuhu = getSuhuStatus(rowSuhu);
 
@@ -796,18 +795,18 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
-                        {rowPh !== null ? (
+                        {rowHumidity !== null ? (
                           <span className="font-mono font-bold text-sm text-[#2D3B2D]">
-                            {rowPh.toFixed(2)} pH
+                            {rowHumidity.toFixed(1)} %
                           </span>
                         ) : (
                           <span className="text-slate-400 font-mono">—</span>
                         )}
                       </td>
                       <td className="py-2.5 px-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stPh.color}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full mr-1 ${stPh.dot}`} />
-                          <span>{stPh.label}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stHumidity.color}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full mr-1 ${stHumidity.dot}`} />
+                          <span>{stHumidity.label}</span>
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
@@ -862,7 +861,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
       <div className="bg-white border border-[#D4DFC8] rounded-2xl p-5 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[#E8EDE0]">
           <div>
-            <h3 className="text-sm font-bold text-[#2D3B2D]">Perbandingan pH, TDS & Suhu per Jam</h3>
+            <h3 className="text-sm font-bold text-[#2D3B2D]">Perbandingan Kelembapan, TDS & Suhu per Jam</h3>
             <p className="text-[11px] text-[#8A9B7A]">Rata-rata pembacaan setiap jam, dipisahkan per hari</p>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -885,7 +884,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
         </div>
 
         <div className="flex flex-wrap items-center gap-4 text-[11px] font-medium text-[#5A6B5A]">
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#5A8A3A]" />Rata-rata pH</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#5A8A3A]" />Rata-rata Kelembapan</span>
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-amber-600" />Rata-rata TDS</span>
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#0284C7]" />Rata-rata Suhu</span>
           {activeChartDay && <span className="ml-auto font-mono text-[#8A9B7A]">{formatChartDay(activeChartDay)}</span>}
@@ -969,7 +968,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
           {[
             { id: 'devices', label: 'Manajemen Perangkat ESP32', icon: Cpu, desc: 'Pairing & kontrol realtime' },
             { id: 'schedules', label: 'Jadwal Fertigasi', icon: Calendar, desc: 'Atur durasi & jam siram' },
-            { id: 'profiles', label: 'Profil Fertigasi', icon: Layers, desc: 'Sesuaikan target nutrisi EC/pH' },
+            { id: 'profiles', label: 'Profil Fertigasi', icon: Layers, desc: 'Sesuaikan target nutrisi TDS/EC' },
           ].map((item) => {
             const Icon = item.icon;
             return (

@@ -718,7 +718,7 @@ export const UserSettingsView = ({ user, onUpdateUser, defaultTab = 'devices', s
                 <div>
                   <h3 className="text-sm font-bold text-[#2D3B2D]">Monitoring Sensor</h3>
                   <p className="text-xs text-[#8A9B7A] mt-1 leading-relaxed">
-                    Aktifkan tampilan telemetri pH dan TDS pada Dashboard Monitoring.
+                    Aktifkan tampilan telemetri suhu, kelembapan udara, dan TDS pada Dashboard Monitoring.
                   </p>
                   <p className={`text-[11px] font-semibold mt-1.5 ${sensorsEnabled ? 'text-[#5A8A3A]' : 'text-slate-500'}`}>
                     {sensorsEnabled ? 'Sensor aktif' : 'Sensor dinonaktifkan — data pada dashboard akan diredupkan'}

@@ -48,7 +48,6 @@ export function App({ embedded = false }) {
       media: 63.0,
       level_air: 72.0,
       ec: 1.8,
-      ph: 6.2,
     },
   });
 
@@ -427,7 +426,7 @@ export function App({ embedded = false }) {
                 <div>
                   <h3 className="text-sm font-bold text-[#2D3B2D] mb-1">Data Sensor</h3>
                   <p className="text-xs text-[#8A9B7A] leading-relaxed">
-                    Pantau suhu, kelembapan, kondisi media, level air, EC, dan pH.
+                    Pantau suhu, kelembapan udara, kondisi media, level air, EC, dan TDS.
                   </p>
                 </div>
               </div>

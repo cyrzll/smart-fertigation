@@ -140,8 +140,8 @@ app.post('/', async (c) => {
 
     let validPhaseId = null;
     if (growth_phase_id) {
-      const [ph]: any = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
-      if (ph.length > 0) validPhaseId = ph[0].id;
+      const [phaseRows]: any = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
+      if (phaseRows.length > 0) validPhaseId = phaseRows[0].id;
     }
 
     const [res]: any = await pool.query(
@@ -184,8 +184,8 @@ app.put('/:id', async (c) => {
 
     let validPhaseId = null;
     if (growth_phase_id) {
-      const [ph]: any = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
-      if (ph.length > 0) validPhaseId = ph[0].id;
+      const [phaseRows]: any = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
+      if (phaseRows.length > 0) validPhaseId = phaseRows[0].id;
     }
 
     await pool.query(

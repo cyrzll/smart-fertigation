@@ -109,9 +109,9 @@ app.post('/', async (c) => {
         const formattedStartTime = start_time.length === 5 ? `${start_time}:00` : start_time;
         let validPhaseId = null;
         if (growth_phase_id) {
-            const [ph] = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
-            if (ph.length > 0)
-                validPhaseId = ph[0].id;
+            const [phaseRows] = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
+            if (phaseRows.length > 0)
+                validPhaseId = phaseRows[0].id;
         }
         const [res] = await pool.query(`INSERT INTO fertigation_schedules (fertigation_profile_id, valve_id, growth_phase_id, hst_start, hst_end, start_time, duration_seconds, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1)`, [profileId, vId, validPhaseId, hStart, hEnd, formattedStartTime, duration_seconds]);
@@ -143,9 +143,9 @@ app.put('/:id', async (c) => {
         const formattedStartTime = start_time.length === 5 ? `${start_time}:00` : start_time;
         let validPhaseId = null;
         if (growth_phase_id) {
-            const [ph] = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
-            if (ph.length > 0)
-                validPhaseId = ph[0].id;
+            const [phaseRows] = await pool.query('SELECT id FROM growth_phases WHERE id = ?', [growth_phase_id]);
+            if (phaseRows.length > 0)
+                validPhaseId = phaseRows[0].id;
         }
         await pool.query(`UPDATE fertigation_schedules
        SET fertigation_profile_id = ?, valve_id = ?, growth_phase_id = ?, hst_start = ?, hst_end = ?, start_time = ?, duration_seconds = ?

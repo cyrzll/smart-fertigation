@@ -302,7 +302,7 @@ app.get('/device/telemetry', async (c) => {
     if (rows.length === 0) {
       return c.json({
         success: true,
-        data: { suhu: null, kelembaban: null, media: null, level_air: null, ec: null, ph: null, tds: null, status: 'Belum ada data' }
+        data: { suhu: null, kelembaban: null, media: null, level_air: null, ec: null, tds: null, status: 'Belum ada data' }
       });
     }
     return c.json({ success: true, data: rows[0] });
@@ -315,13 +315,13 @@ app.get('/device/telemetry', async (c) => {
 app.post('/device/telemetry', async (c) => {
   try {
     const body = await c.req.json();
-    const { device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status } = body;
+    const { device_code, suhu, kelembaban, media, level_air, ec, tds, status } = body;
     const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500 : null);
     const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500 : null);
 
     await pool.query(
-      'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [device_code || 'ESP-FERTIGASI-01', suhu ?? null, kelembaban ?? null, media ?? null, level_air ?? null, finalEc, ph ?? null, finalTds, status || 'Normal']
+      'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [device_code || 'ESP-FERTIGASI-01', suhu ?? null, kelembaban ?? null, media ?? null, level_air ?? null, finalEc, finalTds, status || 'Normal']
     );
 
     return c.json({ success: true, message: 'Telemetry data stored successfully.' });

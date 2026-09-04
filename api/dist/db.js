@@ -274,7 +274,6 @@ export async function initDb() {
         media FLOAT DEFAULT NULL,
         level_air FLOAT DEFAULT NULL,
         ec FLOAT DEFAULT NULL,
-        ph FLOAT DEFAULT 7.0,
         tds FLOAT DEFAULT NULL,
         status VARCHAR(50) DEFAULT 'Normal',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -282,12 +281,12 @@ export async function initDb() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
         try {
-            await conn.query('ALTER TABLE sensor_telemetry ADD COLUMN tds FLOAT NULL AFTER ph');
+            await conn.query('ALTER TABLE sensor_telemetry ADD COLUMN tds FLOAT NULL AFTER ec');
         }
         catch (_) { }
         const [sensorCount] = await conn.query('SELECT COUNT(*) as count FROM sensor_telemetry');
         if (sensorCount[0].count === 0) {
-            await conn.query('INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', ['ESP-FERTIGASI-01', null, null, null, null, 1.8, 6.2, 900.0, 'Normal']);
+            await conn.query('INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ['ESP-FERTIGASI-01', null, null, null, null, 1.8, 900.0, 'Normal']);
         }
         // Seed default users if empty
         const [usersCount] = await conn.query('SELECT COUNT(*) as count FROM users');

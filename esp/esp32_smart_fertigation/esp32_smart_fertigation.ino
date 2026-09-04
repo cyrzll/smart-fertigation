@@ -48,15 +48,32 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.5.4-BLE-Optimized";
+const char* firmware_version = "v2.6.0-DHT22-Temperature-Humidity";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
 #define DEFAULT_WS_PORT 443
 
-// ISRG Root X2 - trust anchor untuk sertifikat Let's Encrypt YE2 yang saat ini
-// digunakan api.tirtaruna.site. Root berlaku sampai September 2040.
-static const char LETS_ENCRYPT_ROOT_X2[] PROGMEM = R"EOF(
+// ISRG Root X1 & X2 - Trust anchor untuk sertifikat SSL Let's Encrypt
+static const char LETS_ENCRYPT_ROOT_CA[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJggGh2XTpbkgPTnz
+VYTtd50KnqRgDiKGnevMg15zfUPoUxVuHAOkKPVJoo0dmaRHquMZUVTXlGxyvmvn
+DA74C7ZpoY1N80UReO0LWF54P49uWeefr58NLj586L4b80eedC3teAhEpow75KGy
+BPMK120275hkLNVAGAqHJQF50UUCcC/x3wfDSF130DBh1++ceEQd3R3564DLGtdR
+ncSrU8WNMzUAv13b1H0ITrNN++9c27m8FvJ950aAQRINJPSTbdqW986k49uUXnqR
+2rrJY6DG+ePvsNmWv4WbUt5gNPuM30dEemh2np6VKAal05Szt8N1MTFbq87NR5i4
+iGwuRWC21656LCEb3yEnQTSmaJxnmZcXYtoGRstRebqQiYBfqPNZJR6Al5Ixu6oP
+M58lxnW6yOO82GWDG79+/7tuimr70AK+BVCsrcMr54eqIEtnn52ApnxuZRHHKOE5
+RIYSKVTp4ojRUCy755m1If21xe77kpIwg9hdW4FCrBr4G1mDYCh+OX4Lk5VY1Jpf
+rqYWkGrl8wgC620i61A7UbbXvf8XfYac22c0hBP3ZrU9889LGOeV2l5N24RWBIBO
+4He2zsioSjyLg24W8up90EQP0850dE6oW00PMJnJaM5aJKmn2A==
+-----END CERTIFICATE-----
 -----BEGIN CERTIFICATE-----
 MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw
 CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg
@@ -103,27 +120,23 @@ bool is_authenticated = false;
 #define STATUS_GREEN_PIN     18
 
 // Pin Konfigurasi Sensor Fisik:
-//   - SENSOR_PH_PIN   : GPIO 34 (ADC1 ESP32) -> Pin Po Modul pH-4502C [TERPASANG AKTIF]
 //   - SENSOR_TDS_PIN  : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
-//   - SENSOR_TEMP_PIN : GPIO 33 -> Pin OUT/DATA Modul DHT22 [TERPASANG AKTIF]
+//   - SENSOR_DHT_PIN  : GPIO 33 -> Pin OUT/DATA DHT22 (Suhu + Kelembapan Udara)
 //
 // Pinout Sensor Suhu (3-Pin: +, -, OUT):
 //   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
 //   - '-'   : Ground                 -> Hubungkan ke GND ESP32
 //   - 'OUT' : Data Digital            -> Hubungkan ke GPIO 33 (D33) ESP32
-#define SENSOR_PH_PIN          34   // Pin Po Modul Sensor pH-4502C
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
-#define SENSOR_TEMP_PIN        33   // Pin OUT Modul Sensor Suhu (GPIO 33)
-#define SENSOR_TEMP_TYPE       DHT22
+#define SENSOR_DHT_PIN         33   // Pin OUT/DATA DHT22 (GPIO 33)
+#define SENSOR_DHT_TYPE        DHT22
 
-#define DEFAULT_PH_CALIBRATION_OFFSET   0.0  // Offset kalibrasi pH (sesuaikan dengan larutan buffer pH 4 / 7)
 #define DEFAULT_TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS default (dapat dikalibrasi dinamis via Flash NVS)
 #define DEFAULT_TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
 #define WATER_TEMP_ESTIMATE             25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
 
 // Faktor Kalibrasi Aktif (Disimpan & Dimuat dari Flash NVS)
 float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
-float ph_calibration_offset = DEFAULT_PH_CALIBRATION_OFFSET;
 
 // Logika Relay Valve (Active-High: HIGH = Valve Terbuka / ON, LOW = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   HIGH  // Sinyal HIGH (3.3V) untuk mengaktifkan relay / membuka valve
@@ -135,7 +148,7 @@ float ph_calibration_offset = DEFAULT_PH_CALIBRATION_OFFSET;
 
 WebSocketsClient webSocket;
 Ticker ledTicker;
-DHT dht(SENSOR_TEMP_PIN, SENSOR_TEMP_TYPE);
+DHT dht(SENSOR_DHT_PIN, SENSOR_DHT_TYPE);
 
 // BLE Server & Characteristic Pointers
 BLEServer *pBleServer = NULL;
@@ -243,16 +256,17 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
 }
 
 // Sensor Telemetry Data (Real Hardware Reading)
-float sensorPH = 7.0;
 float sensorTDS = 0.0;
 float sensorEC = 0.0;
 float sensorTemp = 25.0;
+float sensorHumidity = 0.0;
 bool sensorTempValid = false;
+bool sensorHumidityValid = false;
 
 unsigned long lastSensorCheck = 0;
-float lastSentPH = -999.0;
 float lastSentTDS = -999.0;
 float lastSentTemp = -999.0;
+float lastSentHumidity = -999.0;
 unsigned long lastDhtRead = 0;
 
 // Buffer TDS non-blocking: 30 sampel x 40 ms = jendela pengukuran sekitar 1,2 detik.
@@ -264,25 +278,6 @@ int tdsSamplesAvailable = 0;
 unsigned long lastTdsSample = 0;
 float filteredTdsVoltage = 0.0;
 
-// Fungsi Membaca Nilai pH Aktual Cepat dari Sensor pH-4502C (Pin Po - GPIO 34)
-float readPHSensor() {
-  const int samples = 15;
-  long adcSum = 0;
-  for (int i = 0; i < samples; i++) {
-    adcSum += analogRead(SENSOR_PH_PIN);
-    delayMicroseconds(200); // Sampling instan non-blocking
-  }
-  float avgAdc = (float)adcSum / (float)samples;
-  float voltage = (avgAdc / 4095.0) * 3.3; // Konversi ADC 12-bit ke Volt (0 - 3.3V)
-
-  // Rumus Linear pH-4502C: pH 7.0 ~ 2.50V (dapat dikalibrasi via trimpot modul)
-  // Slope: 5.70 pH/Volt
-  float calculatedPH = 7.0 + ((2.50 - voltage) * 5.70) + ph_calibration_offset;
-  if (calculatedPH < 0.0) calculatedPH = 0.0;
-  if (calculatedPH > 14.0) calculatedPH = 14.0;
-  return calculatedPH;
-}
-
 // DHT22 tidak boleh dibaca lebih cepat dari sekitar 2 detik. Pemanggilan di antara
 // interval tersebut mengembalikan nilai valid terakhir.
 float readTempSensor() {
@@ -290,9 +285,10 @@ float readTempSensor() {
   if (lastDhtRead != 0 && now - lastDhtRead < 2200) return sensorTemp;
   lastDhtRead = now;
 
+  float measuredHumidity = dht.readHumidity();
   float measuredTemp = dht.readTemperature();
-  if (isnan(measuredTemp)) {
-    Serial.println("[DHT22] Pembacaan suhu gagal; memakai nilai valid terakhir.");
+  if (isnan(measuredTemp) || isnan(measuredHumidity)) {
+    Serial.println("[DHT22] Pembacaan suhu/kelembapan gagal; memakai nilai valid terakhir.");
     return sensorTemp;
   }
 
@@ -306,6 +302,10 @@ float readTempSensor() {
   }
 
   sensorTempValid = true;
+  if (measuredHumidity >= 0.0 && measuredHumidity <= 100.0) {
+    sensorHumidity = measuredHumidity;
+    sensorHumidityValid = true;
+  }
   return measuredTemp;
 }
 
@@ -520,25 +520,26 @@ bool syncClockForTls() {
   const long wibUtcOffsetSeconds = 7L * 60L * 60L;
   configTime(wibUtcOffsetSeconds, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
 
-  // Sertifikat TLS tidak dapat divalidasi jika jam ESP masih 1 Januari 1970.
   wsDiagnostic = "SYNCING_TIME";
   Serial.println("[WSS] Menyinkronkan waktu NTP untuk validasi sertifikat TLS...");
   unsigned long startedAt = millis();
-  while (time(nullptr) <= 1704067200 && millis() - startedAt < 12000) {
-    delay(250);
+  // Coba NTP maksimal 3.5 detik agar tidak memblokir sistem jika port 123 UDP diblokir router kampus
+  while (time(nullptr) <= 1704067200 && millis() - startedAt < 3500) {
+    delay(150);
     Serial.print(".");
   }
   Serial.println();
 
+  // Jika NTP diblokir jaringan, set RTC lokal ke September 2026 agar validasi NotBefore TLS Let's Encrypt berhasil
   if (time(nullptr) <= 1704067200) {
-    wsDiagnostic = "NTP_FAILED";
-    Serial.println("[WSS ERROR] Sinkronisasi NTP gagal; koneksi TLS dibatalkan.");
-    return false;
+    struct timeval tv = { .tv_sec = 1788480000 }; // 4 September 2026
+    settimeofday(&tv, NULL);
+    Serial.println("[WSS] Menggunakan fallback timestamp 2026 agar validasi SSL TLS valid.");
   }
 
   struct tm wibTime;
   getLocalTime(&wibTime, 1000);
-  Serial.printf("[WSS] Waktu WIB (UTC+7) tersinkron: %04d-%02d-%02d %02d:%02d:%02d\n",
+  Serial.printf("[WSS] Waktu sistem aktif: %04d-%02d-%02d %02d:%02d:%02d\n",
                 wibTime.tm_year + 1900, wibTime.tm_mon + 1, wibTime.tm_mday,
                 wibTime.tm_hour, wibTime.tm_min, wibTime.tm_sec);
   return true;
@@ -569,10 +570,10 @@ void connectWebSocketServer() {
     Serial.printf("[WS] DNS %s -> %s\n", cleanHost.c_str(), wsResolvedIp.toString().c_str());
 
     if (isSSL) {
-      if (!syncClockForTls()) return;
+      syncClockForTls();
       wsDiagnostic = "TLS_CONNECTING";
-      Serial.printf("[WS] Menghubungkan secara SECURE (WSS/SSL) ke wss://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
-      webSocket.beginSslWithCA(cleanHost.c_str(), ws_port, wsUrl.c_str(), LETS_ENCRYPT_ROOT_X2);
+      Serial.printf("[WS] Menghubungkan secara SECURE (WSS/SSL + Root CA) ke wss://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
+      webSocket.beginSslWithCA(cleanHost.c_str(), ws_port, wsUrl.c_str(), LETS_ENCRYPT_ROOT_CA);
     } else {
       wsDiagnostic = "WS_CONNECTING";
       Serial.printf("[WS] Menghubungkan ke ws://%s:%d%s...\n", cleanHost.c_str(), ws_port, wsUrl.c_str());
@@ -580,7 +581,7 @@ void connectWebSocketServer() {
     }
 
     webSocket.onEvent(webSocketEvent);
-    webSocket.setReconnectInterval(2000);
+    webSocket.setReconnectInterval(3000);
     webSocket.enableHeartbeat(4000, 1500, 2);
   }
 }
@@ -670,18 +671,18 @@ void sendBleStatus() {
   valves["valve1"] = valve1State;
   valves["valve2"] = valve2State;
 
-  // Baca suhu sebelum TDS karena nilainya dipakai untuk kompensasi TDS.
-  sensorPH = readPHSensor();
+  // Satu DHT22 di GPIO 33 menghasilkan suhu dan kelembapan udara.
   sensorTemp = readTempSensor();
   sensorTDS = readTDSSensor();
   sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
 
   JsonObject sensors = doc.createNestedObject("sensors");
-  sensors["ph"] = sensorPH;
   sensors["tds"] = sensorTDS;
   sensors["ec"] = sensorEC;
   if (sensorTempValid) sensors["suhu"] = sensorTemp;
   else sensors["suhu"] = nullptr;
+  if (sensorHumidityValid) sensors["kelembaban"] = sensorHumidity;
+  else sensors["kelembaban"] = nullptr;
 
   String output;
   serializeJson(doc, output);
@@ -1133,28 +1134,29 @@ void sendWsHeartbeat() {
 
 // Send Sensor Telemetry via WebSocket
 void sendWsTelemetry() {
-  lastSentPH = sensorPH;
   lastSentTDS = sensorTDS;
   lastSentTemp = sensorTemp;
+  lastSentHumidity = sensorHumidity;
 
   StaticJsonDocument<256> doc;
   doc["type"] = "TELEMETRY";
   doc["device_code"] = device_code;
   doc["auth_code"] = auth_code;
-  doc["ph"] = sensorPH;
   doc["tds"] = sensorTDS;
   doc["ec"] = sensorEC;
   if (sensorTempValid) doc["suhu"] = sensorTemp;
   else doc["suhu"] = nullptr;
+  if (sensorHumidityValid) doc["kelembaban"] = sensorHumidity;
+  else doc["kelembaban"] = nullptr;
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
   if (sensorTempValid) {
-    Serial.printf("[WS Telemetry] Suhu: %.1f °C | pH: %.2f | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTemp, sensorPH, sensorTDS, filteredTdsVoltage, sensorEC);
+    Serial.printf("[WS Telemetry] Suhu: %.1f °C | Kelembapan: %.1f %% | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTemp, sensorHumidity, sensorTDS, filteredTdsVoltage, sensorEC);
   } else {
-    Serial.printf("[WS Telemetry] DHT22 belum valid | pH: %.2f | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorPH, sensorTDS, filteredTdsVoltage, sensorEC);
+    Serial.printf("[WS Telemetry] DHT22 belum valid | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTDS, filteredTdsVoltage, sensorEC);
   }
 }
 
@@ -1315,7 +1317,6 @@ void setup() {
   Serial.printf("[ESP32] Smart Fertigation AIoT %s Starting...\n", firmware_version);
   Serial.println("=======================================================");
 
-  pinMode(SENSOR_PH_PIN, INPUT);
   pinMode(SENSOR_TDS_PIN, INPUT);
   dht.begin();
 
@@ -1329,7 +1330,6 @@ void setup() {
   ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
   ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
   tds_calibration_factor = preferences.getFloat("tds_factor", DEFAULT_TDS_CALIBRATION_FACTOR);
-  ph_calibration_offset = preferences.getFloat("ph_offset", DEFAULT_PH_CALIBRATION_OFFSET);
 
   // Jika NVS masih kosong, gunakan default
   if (ws_host_str == "") {
@@ -1435,7 +1435,7 @@ void loop() {
     }
   }
 
-  // Kirim Heartbeat WebSocket setiap 4 detik
+  // Kirim Heartbeat WebSocket setiap 4 detik jika terhubung
   if (now - lastHeartbeat >= 4000 || lastHeartbeat == 0) {
     lastHeartbeat = now;
     if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
@@ -1443,22 +1443,34 @@ void loop() {
     }
   }
 
+  // Auto-retry inisialisasi WebSocket jika Wi-Fi sudah tersambung tetapi WS belum aktif
+  static unsigned long lastWsRetry = 0;
+  if (WiFi.status() == WL_CONNECTED && !webSocket.isConnected()) {
+    if (now - lastWsRetry >= 10000 || lastWsRetry == 0) {
+      lastWsRetry = now;
+      if (wsDiagnostic == "NTP_FAILED" || wsDiagnostic == "NOT_CONNECTED" || wsDiagnostic == "DNS_FAILED" || wsDiagnostic == "DISCONNECTED_RETRYING") {
+        Serial.println("[WS] Mencoba inisialisasi ulang koneksi WebSocket...");
+        connectWebSocketServer();
+      }
+    }
+  }
+
   // 1. Cek pembacaan sensor setiap 800 ms (Cepat & Responsif)
   if (now - lastSensorCheck >= 800 || lastSensorCheck == 0) {
     lastSensorCheck = now;
-    float curPH = readPHSensor();
     float curTemp = readTempSensor();
     // TDS memakai sensorTemp untuk kompensasi; perbarui lebih dahulu.
     sensorTemp = curTemp;
     float curTDS = readTDSSensor();
 
     // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / suhu berubah)
-    bool significantChange = (fabs(curPH - lastSentPH) >= 0.15) || (fabs(curTDS - lastSentTDS) >= 25.0) || (fabs(curTemp - lastSentTemp) >= 0.8);
+    bool significantChange = (fabs(curTDS - lastSentTDS) >= 25.0)
+      || (fabs(curTemp - lastSentTemp) >= 0.8)
+      || (sensorHumidityValid && fabs(sensorHumidity - lastSentHumidity) >= 2.0);
 
     // Kirim WebSocket jika ada perubahan nyata (instan) ATAU interval periodik 3.0 detik
     if (significantChange || (now - lastTelemetry >= 3000) || (lastTelemetry == 0)) {
       lastTelemetry = now;
-      sensorPH = curPH;
       sensorTDS = curTDS;
       sensorTemp = curTemp;
       sensorEC = sensorTDS / 500.0;

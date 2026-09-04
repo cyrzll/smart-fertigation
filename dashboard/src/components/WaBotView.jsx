@@ -97,7 +97,7 @@ export const WaBotView = () => {
 
   const menuCards = [
     { id: 1, title: 'Status Sistem', keyword: 'STATUS', icon: Activity, sample: '🌱 Tanaman: Melon\nHST: 11 | Profil: Melon Standar\nESP32: 🟢 ONLINE | Mode: AUTO' },
-    { id: 2, title: 'Kondisi Sensor', keyword: 'SENSOR', icon: Thermometer, sample: '🌡️ Suhu: 29.4°C | Kelembaban: 76%\nMedia: 63% | Air: 72%\nEC: 1.8 mS/cm | pH: 6.2' },
+    { id: 2, title: 'Kondisi Sensor', keyword: 'SENSOR', icon: Thermometer, sample: '🌡️ Suhu: 29.4°C | Kelembapan: 76%\nMedia: 63% | Air: 72%\nEC: 1.8 mS/cm | TDS: 900 PPM' },
     { id: 3, title: 'Jadwal Hari Ini', keyword: 'JADWAL', icon: Calendar, sample: '📅 HST 11 (Vegetatif)\n1. 06:00 Valve 1 3 menit\n2. 12:00 Valve 1 3 menit' },
     { id: 4, title: 'Setting Jadwal', keyword: 'SETTING', icon: Settings, sample: '📋 Pilih Profil:\n1. Melon Standar\n2. Melon Eksperimen' },
     { id: 5, title: 'Data Penanaman', keyword: 'TANAMAN', icon: Sprout, sample: '🌱 Melon Greenhouse A\nTanam: 10-08-2026 | HST: 11\nFase: Vegetatif | Status: Aktif' },

@@ -144,7 +144,6 @@ export const sensorTelemetry = mysqlTable('sensor_telemetry', {
     media: float('media').default(63.0),
     levelAir: float('level_air').default(72.0),
     ec: float('ec').default(1.8),
-    ph: float('ph').default(6.2),
     status: varchar('status', { length: 50 }).default('Normal'),
     createdAt: datetime('created_at').default(sql `CURRENT_TIMESTAMP`),
 });

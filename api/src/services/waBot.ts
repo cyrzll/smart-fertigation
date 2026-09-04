@@ -27,15 +27,15 @@ let reconnectTimer: NodeJS.Timeout | null = null;
 const sessionDir = path.resolve(process.cwd(), 'session');
 
 const logger = pino({ level: 'silent' });
-const PH_SPIKE_THRESHOLD = 0.5;
+const HUMIDITY_SPIKE_THRESHOLD = 10;
 const TDS_SPIKE_THRESHOLD = 200;
-const PH_SAFE_MIN = 5.5;
-const PH_SAFE_MAX = 6.5;
+const HUMIDITY_SAFE_MIN = 50;
+const HUMIDITY_SAFE_MAX = 85;
 const TDS_SAFE_MIN = 800;
 const TDS_SAFE_MAX = 1400;
 const SENSOR_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const sensorAlertStates = new Map<string, {
-  ph: number | null;
+  kelembaban: number | null;
   tds: number | null;
   lastAlertAt: number;
 }>();
@@ -89,19 +89,19 @@ const getSensorRange = (value: number | null, min: number, max: number): 'low' |
 async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
   const stateKey = event.registeredDeviceCode || event.serialCode || event.deviceCode;
   const existingState = sensorAlertStates.get(stateKey);
-  const previous = existingState || { ph: null, tds: null, lastAlertAt: 0 };
+  const previous = existingState || { kelembaban: null, tds: null, lastAlertAt: 0 };
 
-  const phDelta = event.ph != null && previous.ph != null ? event.ph - previous.ph : null;
+  const humidityDelta = event.kelembaban != null && previous.kelembaban != null ? event.kelembaban - previous.kelembaban : null;
   const tdsDelta = event.tds != null && previous.tds != null ? event.tds - previous.tds : null;
-  const phSpiked = phDelta != null && Math.abs(phDelta) >= PH_SPIKE_THRESHOLD;
+  const humiditySpiked = humidityDelta != null && Math.abs(humidityDelta) >= HUMIDITY_SPIKE_THRESHOLD;
   const tdsSpiked = tdsDelta != null && Math.abs(tdsDelta) >= TDS_SPIKE_THRESHOLD;
-  const phRange = getSensorRange(event.ph, PH_SAFE_MIN, PH_SAFE_MAX);
+  const humidityRange = getSensorRange(event.kelembaban, HUMIDITY_SAFE_MIN, HUMIDITY_SAFE_MAX);
   const tdsRange = getSensorRange(event.tds, TDS_SAFE_MIN, TDS_SAFE_MAX);
-  const previousPhRange = getSensorRange(previous.ph, PH_SAFE_MIN, PH_SAFE_MAX);
+  const previousHumidityRange = getSensorRange(previous.kelembaban, HUMIDITY_SAFE_MIN, HUMIDITY_SAFE_MAX);
   const previousTdsRange = getSensorRange(previous.tds, TDS_SAFE_MIN, TDS_SAFE_MAX);
-  const shouldAlertPh = event.ph != null && (
-    phSpiked
-    || (existingState ? phRange !== previousPhRange : phRange !== 'normal')
+  const shouldAlertHumidity = event.kelembaban != null && (
+    humiditySpiked
+    || (existingState ? humidityRange !== previousHumidityRange : humidityRange !== 'normal')
   );
   const shouldAlertTds = event.tds != null && (
     tdsSpiked
@@ -109,11 +109,11 @@ async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
   );
   const now = Date.now();
   const isInCooldown = now - previous.lastAlertAt < SENSOR_ALERT_COOLDOWN_MS;
-  const shouldSendAlert = (shouldAlertPh || shouldAlertTds) && !isInCooldown;
+  const shouldSendAlert = (shouldAlertHumidity || shouldAlertTds) && !isInCooldown;
 
   sensorAlertStates.set(stateKey, {
     // Pertahankan nilai referensi sampai perubahan mencapai ambang signifikan.
-    ph: shouldAlertPh || !existingState ? (event.ph ?? previous.ph) : previous.ph,
+    kelembaban: shouldAlertHumidity || !existingState ? (event.kelembaban ?? previous.kelembaban) : previous.kelembaban,
     tds: shouldAlertTds || !existingState ? (event.tds ?? previous.tds) : previous.tds,
     // Reservasi cooldown sebelum proses kirim untuk mencegah event paralel mengirim dua pesan.
     lastAlertAt: shouldSendAlert ? now : previous.lastAlertAt,
@@ -137,12 +137,12 @@ async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
   if (recipients.length === 0) return;
 
   const changes: string[] = [];
-  if (shouldAlertPh && event.ph != null) {
-    if (phSpiked && phDelta != null) {
-      changes.push(`pH  : ${previous.ph?.toFixed(2)} → ${event.ph.toFixed(2)} (${formatDelta(phDelta, 2)})`);
+  if (shouldAlertHumidity && event.kelembaban != null) {
+    if (humiditySpiked && humidityDelta != null) {
+      changes.push(`Kelembapan: ${previous.kelembaban?.toFixed(1)} → ${event.kelembaban.toFixed(1)} % (${formatDelta(humidityDelta, 1)})`);
     } else {
-      const condition = phRange === 'low' ? 'terlalu rendah' : phRange === 'high' ? 'terlalu tinggi' : 'kembali ideal';
-      changes.push(`pH  : ${event.ph.toFixed(2)} (${condition}; target ${PH_SAFE_MIN.toFixed(1)}–${PH_SAFE_MAX.toFixed(1)})`);
+      const condition = humidityRange === 'low' ? 'terlalu rendah' : humidityRange === 'high' ? 'terlalu tinggi' : 'kembali ideal';
+      changes.push(`Kelembapan: ${event.kelembaban.toFixed(1)} % (${condition}; target ${HUMIDITY_SAFE_MIN}–${HUMIDITY_SAFE_MAX} %)`);
     }
   }
   if (shouldAlertTds && event.tds != null) {
@@ -154,7 +154,7 @@ async function handleTelemetrySpike(event: TelemetryAlertEvent): Promise<void> {
     }
   }
 
-  const message = `⚠️ *PERINGATAN SENSOR pH & TDS*
+  const message = `⚠️ *PERINGATAN SENSOR KELEMBAPAN & TDS*
 Perangkat: ${event.registeredDeviceCode}
 
 ${changes.join('\n')}
@@ -461,7 +461,7 @@ Setelah perangkat ESP32 ditambahkan dan diverifikasi, seluruh menu pemantauan & 
             const connectedDeviceCode = getConnectedDeviceCode(d.device_code, d.serial_code)
               || (userDevices.length === 1 ? getOnlyConnectedDeviceCode() : null);
             const [telemetries]: any = await pool.query(
-              `SELECT device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status, created_at
+              `SELECT device_code, suhu, kelembaban, media, level_air, ec, tds, status, created_at
                FROM sensor_telemetry
                WHERE device_code IN (?, ?, ?)
                ORDER BY created_at DESC, id DESC
@@ -485,7 +485,6 @@ Setelah perangkat ESP32 ditambahkan dan diverifikasi, seluruh menu pemantauan & 
             const telemetrySection = sensor
               ? `
 📡 *TELEMETRI TERBARU*
-pH         : ${formatSensorValue(sensor.ph, 2)}
 TDS        : ${tdsValue != null ? `${Math.round(tdsValue)} PPM` : '—'}
 EC         : ${formatSensorValue(sensor.ec, 2)} mS/cm
 Suhu       : ${formatSensorValue(sensor.suhu, 1)} °C
@@ -513,7 +512,7 @@ Jumlah Valve : ${valves[0]?.count || 0}${telemetrySection}`;
             const connectedDeviceCode = getConnectedDeviceCode(primaryDevice.device_code, primaryDevice.serial_code)
               || (userDevices.length === 1 ? getOnlyConnectedDeviceCode() : null);
             const [rows]: any = await pool.query(
-              `SELECT suhu, kelembaban, media, level_air, ec, ph, tds, status, created_at
+              `SELECT suhu, kelembaban, media, level_air, ec, tds, status, created_at
                FROM sensor_telemetry
                WHERE device_code IN (?, ?, ?)
                ORDER BY created_at DESC, id DESC
@@ -535,7 +534,6 @@ Jumlah Valve : ${valves[0]?.count || 0}${telemetrySection}`;
               if (hasSensorValue(sensor.media)) sensorLines.push(`Media      : ${formatSensorValue(sensor.media, 1)} %`);
               if (hasSensorValue(sensor.level_air)) sensorLines.push(`Level Air  : ${formatSensorValue(sensor.level_air, 1)} %`);
               if (hasSensorValue(sensor.ec)) sensorLines.push(`EC         : ${formatSensorValue(sensor.ec, 2)} mS/cm`);
-              if (hasSensorValue(sensor.ph)) sensorLines.push(`pH         : ${formatSensorValue(sensor.ph, 2)}`);
               if (hasSensorValue(sensor.tds)) sensorLines.push(`TDS        : ${Math.round(Number(sensor.tds))} PPM`);
 
               if (sensorLines.length === 0) {

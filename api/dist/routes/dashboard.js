@@ -57,13 +57,13 @@ app.get('/', async (c) => {
         }
         const [valvesCountRes] = await pool.query('SELECT COUNT(*) as count FROM valves WHERE is_active = 1');
         const valveCount = valvesCountRes[0]?.count || 0;
-        // Ambil data telemetri sensor terbaru (pH, EC, suhu, kelembaban, level air)
+        // Ambil data telemetri sensor terbaru (suhu, kelembapan udara, TDS/EC)
         const [telemetryRes] = await pool.query('SELECT * FROM sensor_telemetry ORDER BY created_at DESC LIMIT 1');
         const latestTelemetry = telemetryRes.length > 0 ? telemetryRes[0] : null;
         // Ambil satu pencatatan terbaru untuk setiap menit agar status tidak berulang
         // saat ESP32 mengirim telemetri beberapa kali dalam menit yang sama.
         const [recentTelemetries] = await pool.query(`SELECT st.id, st.device_code, st.suhu, st.kelembaban, st.media,
-              st.level_air, st.ec, st.ph, st.tds, st.status, st.created_at
+              st.level_air, st.ec, st.tds, st.status, st.created_at
        FROM sensor_telemetry st
        INNER JOIN (
          SELECT MAX(id) AS id
@@ -76,7 +76,7 @@ app.get('/', async (c) => {
         // Rata-rata per jam, dipisahkan berdasarkan tanggal, untuk grafik 7 hari terakhir.
         const [hourlyTelemetries] = await pool.query(`SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
               HOUR(created_at) AS hour,
-              ROUND(AVG(ph), 2) AS avg_ph,
+              ROUND(AVG(kelembaban), 1) AS avg_kelembaban,
               ROUND(AVG(COALESCE(tds, ec * 500)), 0) AS avg_tds,
               ROUND(AVG(suhu), 1) AS avg_suhu,
               COUNT(*) AS sample_count

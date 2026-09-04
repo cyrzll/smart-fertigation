@@ -270,7 +270,7 @@ export function initWebSocketServer(server) {
                         telemetry: payload.type === 'TELEMETRY' ? payload : undefined,
                     });
                     if (payload.type === 'TELEMETRY') {
-                        const { suhu, kelembaban, media, level_air, ec, ph, tds, status } = payload;
+                        const { suhu, kelembaban, media, level_air, ec, tds, status } = payload;
                         const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
                         const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
                         const nowTime = Date.now();
@@ -278,14 +278,13 @@ export function initWebSocketServer(server) {
                         if (nowTime - lastInsert >= 10000) {
                             lastDbTelemetryInsert.set(deviceCode, nowTime);
                             try {
-                                await pool.query('INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, ph, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+                                await pool.query('INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
                                     deviceSocket.telemetryDeviceCode || deviceCode,
                                     suhu != null ? Number(suhu) : null,
                                     kelembaban != null ? Number(kelembaban) : null,
                                     media != null ? Number(media) : null,
                                     level_air != null ? Number(level_air) : null,
                                     finalEc != null ? Number(finalEc.toFixed(2)) : null,
-                                    ph != null ? Number(ph) : null,
                                     finalTds != null ? Number(finalTds.toFixed(0)) : null,
                                     status || 'Normal',
                                 ]);
@@ -304,7 +303,6 @@ export function initWebSocketServer(server) {
                                 media,
                                 level_air,
                                 ec: finalEc != null ? Number(finalEc.toFixed(2)) : null,
-                                ph: ph != null ? Number(ph) : null,
                                 tds: finalTds != null ? Number(finalTds.toFixed(0)) : null,
                                 status: status || 'Normal',
                                 created_at: new Date().toISOString(),
@@ -315,7 +313,7 @@ export function initWebSocketServer(server) {
                                 deviceCode,
                                 registeredDeviceCode: deviceSocket.telemetryDeviceCode || deviceCode,
                                 serialCode,
-                                ph: ph != null && Number.isFinite(Number(ph)) ? Number(ph) : null,
+                                kelembaban: kelembaban != null && Number.isFinite(Number(kelembaban)) ? Number(kelembaban) : null,
                                 tds: finalTds != null && Number.isFinite(finalTds) ? Number(finalTds.toFixed(0)) : null,
                                 createdAt: new Date().toISOString(),
                             }).catch((alertErr) => {
