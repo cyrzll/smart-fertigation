@@ -48,7 +48,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.5.3-TDS-Calibrated-ADC";
+const char* firmware_version = "v2.5.4-BLE-Optimized";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -125,9 +125,9 @@ bool is_authenticated = false;
 float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
 float ph_calibration_offset = DEFAULT_PH_CALIBRATION_OFFSET;
 
-// Logika Relay Valve (Modul Relay Active-Low: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
-#define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
-#define RELAY_CLOSE_STATE  HIGH  // Sinyal HIGH (3.3V) untuk mematikan relay / menutup valve
+// Logika Relay Valve (Active-High: HIGH = Valve Terbuka / ON, LOW = Valve Tertutup / OFF)
+#define RELAY_OPEN_STATE   HIGH  // Sinyal HIGH (3.3V) untuk mengaktifkan relay / membuka valve
+#define RELAY_CLOSE_STATE  LOW   // Sinyal LOW (0V) untuk mematikan relay / menutup valve (Standby saat boot)
 
 // Logika LED (Active-High: HIGH = Menyala, LOW = Mati)
 #define LED_ON_STATE       HIGH
@@ -198,7 +198,7 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
   if (open) {
     digitalWrite(gpio, RELAY_OPEN_STATE);
     digitalWrite(ONBOARD_LED, LED_ON_STATE);
-    Serial.printf("[Valve] GPIO %d TERBUKA (Relay LOW, Durasi: %ds)\n", gpio, durationSeconds);
+    Serial.printf("[Valve] GPIO %d TERBUKA (Relay HIGH, Durasi: %ds)\n", gpio, durationSeconds);
 
     if (gpio == VALVE1_PIN) valve1State = true;
     if (gpio == VALVE2_PIN) valve2State = true;
@@ -216,7 +216,7 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
     }
   } else {
     digitalWrite(gpio, RELAY_CLOSE_STATE);
-    Serial.printf("[Valve] GPIO %d TERTUTUP (Relay HIGH)\n", gpio);
+    Serial.printf("[Valve] GPIO %d TERTUTUP (Relay LOW)\n", gpio);
 
     if (gpio == VALVE1_PIN) valve1State = false;
     if (gpio == VALVE2_PIN) valve2State = false;
@@ -464,10 +464,10 @@ void blinkConfirmationLED(int times) {
     Serial.printf("[Blink] Kedipan ke-%d dari %d\n", i, times);
     digitalWrite(CONFIRM_LED_PIN, HIGH);
     digitalWrite(ONBOARD_LED, HIGH);
-    delay(400);
+    delay(120);
     digitalWrite(CONFIRM_LED_PIN, LOW);
     digitalWrite(ONBOARD_LED, LOW);
-    delay(400);
+    delay(120);
   }
 
   digitalWrite(ONBOARD_LED, HIGH); // Standby ON (indikator terhubung)
@@ -478,30 +478,26 @@ void blinkConfirmationLED(int times) {
 // BLE Notification & Messaging Helpers (Safe Chunking for Long Payloads)
 // =================================================================================
 void sendBleNotify(String message) {
-  // Callback BLE dan loop utama dapat mengirim pada saat bersamaan. Jangan biarkan
-  // potongan dua JSON saling menyisip di browser.
-  if (bleNotifyInProgress) return;
+  if (bleNotifyInProgress || !bleDeviceConnected || pBleTxChar == NULL) return;
   bleNotifyInProgress = true;
 
-  if (bleDeviceConnected && pBleTxChar != NULL) {
-    // Append newline delimiter for easy client buffer parsing
-    String packet = message + "\n";
-    size_t totalLen = packet.length();
-    size_t chunkSize = 128; // Chunk aman agar payload panjang (seperti WIFI_SCAN_RESULT) tidak terpotong
+  // Append newline delimiter for easy client buffer parsing
+  String packet = message + "\n";
+  size_t totalLen = packet.length();
+  size_t chunkSize = 120; // Chunk optimal agar tidak membebani buffer GATT
 
-    if (totalLen <= chunkSize) {
-      pBleTxChar->setValue((uint8_t*)packet.c_str(), totalLen);
+  if (totalLen <= chunkSize) {
+    pBleTxChar->setValue((uint8_t*)packet.c_str(), totalLen);
+    pBleTxChar->notify();
+  } else {
+    for (size_t offset = 0; offset < totalLen; offset += chunkSize) {
+      size_t len = min(chunkSize, totalLen - offset);
+      pBleTxChar->setValue((uint8_t*)(packet.c_str() + offset), len);
       pBleTxChar->notify();
-    } else {
-      for (size_t offset = 0; offset < totalLen; offset += chunkSize) {
-        size_t len = min(chunkSize, totalLen - offset);
-        pBleTxChar->setValue((uint8_t*)(packet.c_str() + offset), len);
-        pBleTxChar->notify();
-        delay(15);
-      }
+      delay(8); // Jeda kecil non-blocking agar buffer stack BLE tidak overflow
     }
-    Serial.printf("[BLE TX] %s\n", message.c_str());
   }
+  Serial.printf("[BLE TX] %s\n", message.c_str());
 
   bleNotifyInProgress = false;
 }
@@ -628,7 +624,7 @@ void reconnectWebSocket() {
 
 // Send comprehensive Device & WiFi Status over BLE
 void sendBleStatus() {
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<512> doc;
   doc["type"] = "STATUS";
   doc["device_code"] = device_code;
   doc["serial_code"] = serial_code;
@@ -699,26 +695,26 @@ void performBleWifiScan() {
   // Pastikan Wi-Fi dalam mode Station & hentikan proses koneksi aktif di background
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  delay(100);
+  delay(50);
 
   int n = WiFi.scanNetworks(false, false);
   Serial.printf("[BLE SCAN] Ditemukan %d jaringan Wi-Fi.\n", n);
 
   // Jika scan awal gagal (-2), coba sekali lagi setelah delay singkat
   if (n < 0) {
-    delay(200);
+    delay(100);
     n = WiFi.scanNetworks(false, false);
     Serial.printf("[BLE SCAN RETRY] Ditemukan %d jaringan Wi-Fi.\n", n);
   }
 
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<768> doc;
   doc["type"] = "WIFI_SCAN_RESULT";
   doc["count"] = (n >= 0) ? n : 0;
   JsonArray networks = doc.createNestedArray("networks");
 
   if (n > 0) {
-    // Batasi 10 jaringan terkuat agar transmisi BLE cepat dan stabil
-    for (int i = 0; i < n && i < 10; ++i) {
+    // Batasi 8 jaringan terkuat agar transmisi BLE cepat, hemat RAM, dan stabil
+    for (int i = 0; i < n && i < 8; ++i) {
       JsonObject net = networks.createNestedObject();
       net["ssid"] = WiFi.SSID(i);
       net["rssi"] = WiFi.RSSI(i);
@@ -757,8 +753,9 @@ void connectWifiViaBle(String ssid, String pass) {
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
-    delay(500);
+  // Max 6 detik (24 x 250ms) agar tidak memblokir BLE connection polling
+  while (WiFi.status() != WL_CONNECTED && attempts < 24) {
+    delay(250);
     updateStatusIndicator();
     Serial.print(".");
     attempts++;
@@ -791,7 +788,7 @@ void connectWifiViaBle(String ssid, String pass) {
   sendBleNotify(resMsg);
 
   // Send refreshed status
-  delay(200);
+  delay(100);
   sendBleStatus();
 }
 
@@ -1090,8 +1087,8 @@ void setupBLE() {
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
-  pAdvertising->setMinPreferred(0x12);
+  pAdvertising->setMinPreferred(0x10); // 20ms connection interval min
+  pAdvertising->setMaxPreferred(0x20); // 40ms connection interval max
   BLEDevice::startAdvertising();
   bleStackInitialized = true;
   Serial.printf("[BLE] BLE Server Berhasil Berjalan! Nama: '%s', Service UUID: %s\n\n", dynamicBleName.c_str(), SERVICE_UUID);
@@ -1294,19 +1291,30 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 // Setup
 // =================================================================================
 void setup() {
+  // Inisialisasi awal hardware instan: Kunci semua pin valve ke kondisi TERTUTUP/MATI (LOW / 0V)
+  // Dilakukan pada baris pertama sebelum delay agar tidak ada lonjakan (glitch) saat boot
+  pinMode(VALVE1_PIN, OUTPUT);
+  pinMode(VALVE2_PIN, OUTPUT);
+  digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE); // LOW (0V)
+  digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE); // LOW (0V)
+
+  pinMode(ONBOARD_LED, OUTPUT);
+  pinMode(CONFIRM_LED_PIN, OUTPUT);
+  pinMode(STATUS_RED_PIN, OUTPUT);
+  pinMode(STATUS_YELLOW_PIN, OUTPUT);
+  pinMode(STATUS_GREEN_PIN, OUTPUT);
+  digitalWrite(ONBOARD_LED, LED_OFF_STATE);
+  digitalWrite(CONFIRM_LED_PIN, LED_OFF_STATE);
+  digitalWrite(STATUS_RED_PIN, LED_ON_STATE);
+  digitalWrite(STATUS_YELLOW_PIN, LED_OFF_STATE);
+  digitalWrite(STATUS_GREEN_PIN, LED_OFF_STATE);
+
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n=======================================================");
   Serial.printf("[ESP32] Smart Fertigation AIoT %s Starting...\n", firmware_version);
   Serial.println("=======================================================");
 
-  pinMode(VALVE1_PIN, OUTPUT);
-  pinMode(VALVE2_PIN, OUTPUT);
-  pinMode(ONBOARD_LED, OUTPUT);
-  pinMode(CONFIRM_LED_PIN, OUTPUT);
-  pinMode(STATUS_RED_PIN, OUTPUT);
-  pinMode(STATUS_YELLOW_PIN, OUTPUT);
-  pinMode(STATUS_GREEN_PIN, OUTPUT);
   pinMode(SENSOR_PH_PIN, INPUT);
   pinMode(SENSOR_TDS_PIN, INPUT);
   dht.begin();
@@ -1314,15 +1322,6 @@ void setup() {
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
   analogSetPinAttenuation(SENSOR_TDS_PIN, ADC_11db);
-
-  // Inisialisasi awal saat boot: kedua valve TERTUTUP (RELAY_CLOSE_STATE)
-  digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE);
-  digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE);
-  digitalWrite(ONBOARD_LED, LED_OFF_STATE);
-  digitalWrite(CONFIRM_LED_PIN, LED_OFF_STATE);
-  digitalWrite(STATUS_RED_PIN, LED_ON_STATE);
-  digitalWrite(STATUS_YELLOW_PIN, LED_OFF_STATE);
-  digitalWrite(STATUS_GREEN_PIN, LED_OFF_STATE);
 
   // 1. Baca konfigurasi dari flash memory (NVS)
   preferences.begin("fertigation", false);
@@ -1401,7 +1400,7 @@ void loop() {
 
   // Re-start BLE Advertising if disconnected
   if (!bleDeviceConnected && oldBleDeviceConnected) {
-    delay(500); // give the bluetooth stack the chance to get things ready
+    delay(200); // give the bluetooth stack the chance to get things ready
     pBleServer->startAdvertising(); // restart advertising
     Serial.println("[BLE] Restarting advertising...");
     oldBleDeviceConnected = bleDeviceConnected;
@@ -1409,6 +1408,7 @@ void loop() {
   // Transition from disconnected to connected
   if (bleDeviceConnected && !oldBleDeviceConnected) {
     oldBleDeviceConnected = bleDeviceConnected;
+    lastBleStatusUpdate = now;
     // Kirim status awal ke client saat baru tersambung
     sendBleStatus();
   }
@@ -1453,10 +1453,10 @@ void loop() {
     float curTDS = readTDSSensor();
 
     // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / suhu berubah)
-    bool significantChange = (fabs(curPH - lastSentPH) >= 0.08) || (fabs(curTDS - lastSentTDS) >= 12.0) || (fabs(curTemp - lastSentTemp) >= 0.5);
+    bool significantChange = (fabs(curPH - lastSentPH) >= 0.15) || (fabs(curTDS - lastSentTDS) >= 25.0) || (fabs(curTemp - lastSentTemp) >= 0.8);
 
-    // Kirim seketika jika ada perubahan nyata (instan) ATAU interval periodik 2.5 detik
-    if (significantChange || (now - lastTelemetry >= 2500) || (lastTelemetry == 0)) {
+    // Kirim WebSocket jika ada perubahan nyata (instan) ATAU interval periodik 3.0 detik
+    if (significantChange || (now - lastTelemetry >= 3000) || (lastTelemetry == 0)) {
       lastTelemetry = now;
       sensorPH = curPH;
       sensorTDS = curTDS;
@@ -1466,10 +1466,14 @@ void loop() {
       if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
         sendWsTelemetry();
       }
-      if (bleDeviceConnected) {
-        sendBleStatus();
-      }
     }
+  }
+
+  // 2. Kirim update status BLE teratur (Throttle minimal 2.5 detik)
+  // Menghindari tabrakan antrean RF 2.4 GHz antara Wi-Fi dan Bluetooth
+  if (bleDeviceConnected && (now - lastBleStatusUpdate >= 2500 || lastBleStatusUpdate == 0)) {
+    lastBleStatusUpdate = now;
+    sendBleStatus();
   }
 
   // Auto-close dynamic valve timers (Mendukung GPIO 25, 26, 27, dan semua pin kustom)

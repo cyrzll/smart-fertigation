@@ -230,6 +230,41 @@ class BleService {
   }
 
   /**
+   * Reconnect to the previously selected device without re-opening device picker
+   */
+  async reconnect() {
+    if (!this.device) {
+      throw new Error('Belum ada perangkat yang pernah dipilih.');
+    }
+
+    try {
+      this.log('SYS', 'Mencoba menyambungkan kembali Bluetooth...');
+      this.server = await this.device.gatt.connect();
+      this.service = await this.server.getPrimaryService(BLE_CONFIG.SERVICE_UUID);
+      this.rxChar = await this.service.getCharacteristic(BLE_CONFIG.RX_UUID);
+      this.txChar = await this.service.getCharacteristic(BLE_CONFIG.TX_UUID);
+      await this.txChar.startNotifications();
+      this.txChar.addEventListener('characteristicvaluechanged', this.handleNotification.bind(this));
+
+      this.isConnected = true;
+      this.emit('connection_change', {
+        connected: true,
+        deviceName: this.device.name || 'ESP32 Device',
+        deviceId: this.device.id,
+      });
+
+      this.log('SYS', 'Koneksi Bluetooth berhasil dipulihkan!');
+      await this.requestStatus();
+      return true;
+    } catch (err) {
+      this.isConnected = false;
+      this.log('ERR', `Gagal reconnect Bluetooth: ${err.message}`);
+      this.emit('connection_change', { connected: false, error: err.message });
+      throw err;
+    }
+  }
+
+  /**
    * Handle unexpected disconnection
    */
   handleDisconnection() {
