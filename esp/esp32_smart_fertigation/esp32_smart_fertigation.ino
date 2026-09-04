@@ -345,23 +345,32 @@ void resetTdsCalibration() {
   Serial.println("[TDS] Faktor kalibrasi dikembalikan ke default (1.0000).");
 }
 
-// Fungsi 1-Click Kalibrasi Otomatis TDS Menggunakan Larutan Standar (misal 1382 PPM)
+// Batas tegangan baseline udara kering (open-circuit) untuk modul TDS Meter V1.0
+// Saat di udara kering, output modul berada di ~2.42V. Nilai di atas 2.36V otomatis dianggap 0 PPM (di udara)
+#define TDS_AIR_BASELINE_VOLTAGE 2.42
+
+// Fungsi 1-Click Kalibrasi Otomatis TDS Menggunakan Larutan Standar (misal 1382 PPM / 1000 PPM)
 bool calibrateTdsWithStandard(float standardPpm) {
   if (standardPpm <= 0.0) {
     Serial.println("[TDS] Gagal: Nilai standar PPM harus lebih besar dari 0!");
     return false;
   }
-  if (filteredTdsVoltage < 0.035) {
-    Serial.println("[TDS] Gagal: Tegangan sensor terlalu rendah (< 35 mV). Pastikan probe terendam di larutan!");
+  if (filteredTdsVoltage >= (TDS_AIR_BASELINE_VOLTAGE - 0.06)) {
+    Serial.println("[TDS] Gagal: Probe terdeteksi masih di udara kering (tegangan baseline). Celupkan probe ke larutan!");
     return false;
   }
 
-  // Hitung nilai PPM mentah sebelum dikalikan faktor
-  float tempCoeff = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
-  float compVolt = filteredTdsVoltage / tempCoeff;
-  float uncalibratedPpm = (133.42 * pow(compVolt, 3) - 255.86 * pow(compVolt, 2) + 857.39 * compVolt) * 0.5;
+  float activeVoltage = TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage;
+  if (activeVoltage <= 0.02) {
+    Serial.println("[TDS] Gagal: Penurunan tegangan terlalu kecil. Pastikan probe terendam di larutan!");
+    return false;
+  }
 
-  if (uncalibratedPpm <= 10.0) {
+  float tempCoeff = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  float compVolt = activeVoltage / tempCoeff;
+  float uncalibratedPpm = compVolt * 215.0;
+
+  if (uncalibratedPpm <= 5.0) {
     Serial.println("[TDS] Gagal: Pembacaan sensor terlalu kecil untuk larutan standar.");
     return false;
   }
@@ -406,20 +415,23 @@ float readTDSSensor() {
   if (filteredTdsVoltage <= 0.0) filteredTdsVoltage = measuredVoltage;
   else filteredTdsVoltage = (filteredTdsVoltage * 0.80) + (measuredVoltage * 0.20);
 
-  // Jika tegangan terlalu kecil (< 35 mV), probe di udara / kering -> 0 PPM
-  if (filteredTdsVoltage < 0.035) {
+  // Jika probe berada di udara (tegangan mendekati baseline udara ~2.42V atau kabel terlepas < 0.05V) -> 0 PPM
+  if (filteredTdsVoltage >= (TDS_AIR_BASELINE_VOLTAGE - 0.06) || filteredTdsVoltage < 0.05) {
     return 0.0;
   }
 
-  // DHT22 mengukur suhu udara, bukan suhu larutan. Gunakan estimasi suhu air
-  // sampai tersedia probe suhu air terpisah agar kompensasi TDS tidak keliru.
+  // Hitung tegangan aktif konduktivitas (penurunan tegangan dari baseline udara)
+  float activeVoltage = TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage;
+  if (activeVoltage < 0.0) activeVoltage = 0.0;
+
+  // Kompensasi suhu air standar 25°C
   float currentWaterTemp = WATER_TEMP_ESTIMATE;
   float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
-  float compensationVoltage = filteredTdsVoltage / compensationCoefficient;
+  float compensationVoltage = activeVoltage / compensationCoefficient;
 
-  // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
-  // TDS (ppm) = (133.42 * V^3 - 255.86 * V^2 + 857.39 * V) * 0.5 * factor
-  float calculatedTDS = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5 * tds_calibration_factor;
+  // Kalkulasi TDS proporsional terkalibrasi:
+  // Baseline air biasa (~1.859V drop 0.56V) menghasilkan ~120 PPM
+  float calculatedTDS = (compensationVoltage * 215.0) * tds_calibration_factor;
 
   if (calculatedTDS < 0.0) calculatedTDS = 0.0;
   return calculatedTDS;
@@ -1433,8 +1445,9 @@ void loop() {
     } else if (cmd == "RESET_TDS_CAL" || cmd == "reset_tds_cal") {
       resetTdsCalibration();
     } else if (cmd == "RAW_TDS" || cmd == "raw_tds") {
-      Serial.printf("[TDS Debug] Voltase: %.3f V (%.1f mV) | Faktor Kalibrasi: %.4f | TDS: %.1f PPM | EC: %.2f mS/cm\n",
-                    filteredTdsVoltage, filteredTdsVoltage * 1000.0, tds_calibration_factor, sensorTDS, sensorEC);
+      float actV = (TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage > 0) ? (TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage) : 0.0;
+      Serial.printf("[TDS Debug] Voltase ADC: %.3f V (%.1f mV) | V_Aktif (Drop): %.3f V | Faktor Kalibrasi: %.4f | TDS: %.1f PPM | EC: %.2f mS/cm\n",
+                    filteredTdsVoltage, filteredTdsVoltage * 1000.0, actV, tds_calibration_factor, sensorTDS, sensorEC);
     }
   }
 

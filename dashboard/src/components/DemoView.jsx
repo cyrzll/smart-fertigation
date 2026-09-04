@@ -391,28 +391,35 @@ export const DemoView = ({ apiUrl }) => {
                     </td>
                     <td className="py-3.5 px-4">
                       {cmd.status === 'completed' && (
-                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <span title={cmd.message || 'Berhasil dieksekusi oleh ESP32'} className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>COMPLETED</span>
                         </span>
                       )}
                       {cmd.status === 'running' && (
-                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                        <span title={cmd.message || 'Sedang dieksekusi...'} className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-teal-100 text-teal-800 border border-teal-200">
                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                           <span>RUNNING</span>
                         </span>
                       )}
                       {cmd.status === 'pending' && (
-                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        <span title={cmd.message || 'Menunggu ESP32 online'} className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
                           <Clock className="w-3.5 h-3.5" />
                           <span>PENDING</span>
                         </span>
                       )}
                       {['expired', 'failed'].includes(cmd.status) && (
-                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>{cmd.status.toUpperCase()}</span>
-                        </span>
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span title={cmd.message || 'Gagal mengeksekusi perintah'} className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>{cmd.status.toUpperCase()}</span>
+                          </span>
+                          {cmd.message && (
+                            <span className="text-[10px] text-red-600 font-medium max-w-[180px] truncate" title={cmd.message}>
+                              {cmd.message}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>

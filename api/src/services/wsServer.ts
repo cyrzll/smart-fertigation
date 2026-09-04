@@ -212,6 +212,34 @@ export function initWebSocketServer(server: HttpServer) {
     console.log('⏱️ [Scheduler] Fertigasi otomatis aktif (zona waktu Asia/Jakarta).');
   }
 
+  // Auto-expire stale running/pending commands every 10s and notify dashboards
+  setInterval(async () => {
+    try {
+      const [expiredRows]: any = await pool.query(`
+        SELECT id FROM device_commands
+        WHERE status IN ('running', 'pending')
+          AND (expires_at < NOW() OR created_at < DATE_SUB(NOW(), INTERVAL 45 SECOND))
+      `);
+      if (expiredRows && expiredRows.length > 0) {
+        await pool.query(`
+          UPDATE device_commands
+          SET status = 'expired', completed_at = NOW(), message = 'Waktu eksekusi habis (ESP32 tidak merespon)'
+          WHERE status IN ('running', 'pending')
+            AND (expires_at < NOW() OR created_at < DATE_SUB(NOW(), INTERVAL 45 SECOND))
+        `);
+        for (const row of expiredRows) {
+          broadcastToDashboards({
+            type: 'COMMAND_STATUS',
+            command_id: row.id,
+            status: 'expired',
+            message: 'Waktu eksekusi habis (ESP32 tidak merespon)',
+            completed_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (_) {}
+  }, 10_000);
+
   wss.on('connection', async (ws: WebSocket, req) => {
     try {
       const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
@@ -461,9 +489,10 @@ export function findDeviceSocket(deviceCode?: string, serialCode?: string): Devi
     if (dev.ws.readyState !== WebSocket.OPEN) continue;
     const dCode = dev.deviceCode ? dev.deviceCode.toLowerCase() : '';
     const sCode = dev.serialCode ? dev.serialCode.toLowerCase() : '';
+    const tCode = dev.telemetryDeviceCode ? dev.telemetryDeviceCode.toLowerCase() : '';
 
-    if (c1 && (dCode === c1 || sCode === c1)) return dev;
-    if (c2 && (dCode === c2 || sCode === c2)) return dev;
+    if (c1 && (dCode === c1 || sCode === c1 || tCode === c1)) return dev;
+    if (c2 && (dCode === c2 || sCode === c2 || tCode === c2)) return dev;
   }
   return null;
 }

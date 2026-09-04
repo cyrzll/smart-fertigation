@@ -6,6 +6,16 @@ const app = new Hono();
 
 app.get('/', async (c) => {
   try {
+    // Auto-expire stale running/pending commands older than 45s or past expires_at
+    try {
+      await pool.query(`
+        UPDATE device_commands
+        SET status = 'expired', completed_at = NOW(), message = 'Waktu eksekusi habis (ESP32 tidak merespon)'
+        WHERE status IN ('running', 'pending')
+          AND (expires_at < NOW() OR created_at < DATE_SUB(NOW(), INTERVAL 45 SECOND))
+      `);
+    } catch (_) {}
+
     const [devices]: any = await pool.query(
       'SELECT * FROM devices ORDER BY (status = "verified") DESC, (user_id IS NOT NULL) DESC, id DESC'
     );
@@ -29,7 +39,7 @@ app.get('/', async (c) => {
       LEFT JOIN valves v ON v.id = dc.valve_id
       LEFT JOIN devices d ON d.id = dc.device_id
       ORDER BY dc.id DESC
-      LIMIT 15
+      LIMIT 20
     `);
 
     return c.json({
@@ -75,7 +85,7 @@ app.post('/command', async (c) => {
     const actionCmd = command === 'CLOSE' ? 'CLOSE' : 'OPEN';
 
     // Insert command to device_commands
-    const expires_at = new Date(Date.now() + 60000); // 1 minute
+    const expires_at = new Date(Date.now() + 45000); // 45 seconds timeout
 
     const [res]: any = await pool.query(
       `INSERT INTO device_commands (device_id, valve_id, command, duration_seconds, status, expires_at)
@@ -89,11 +99,27 @@ app.post('/command', async (c) => {
 
     console.log(`🚰 [Demo] Sent command #${cmdId} (${actionCmd}, GPIO ${gpio}, ${durSec}s) to ${dev.device_code}: WS result = ${wsSent}`);
 
+    if (!wsSent) {
+      await pool.query(
+        "UPDATE device_commands SET status = 'failed', completed_at = NOW(), message = 'ESP32 sedang offline / tidak terhubung ke WebSocket' WHERE id = ?",
+        [cmdId]
+      );
+    }
+
+    // Broadcast instant update to all open dashboards
+    broadcastToDashboards({
+      type: 'COMMAND_STATUS',
+      command_id: cmdId,
+      status: wsSent ? 'running' : 'failed',
+      message: wsSent ? 'Perintah dikirim ke ESP32' : 'ESP32 sedang offline',
+      completed_at: wsSent ? null : new Date().toISOString(),
+    });
+
     return c.json({
       success: true,
       message: wsSent
         ? `Perintah ${command} berhasil dikirim ke ESP32 secara instan via WebSocket!`
-        : `Perintah ${command} tersimpan. Menunggu koneksi ESP32.`,
+        : `Perintah ${command} tercatat, namun ESP32 saat ini offline.`,
       id: cmdId,
       ws_sent: wsSent,
     });

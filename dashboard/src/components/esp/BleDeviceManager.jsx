@@ -15,16 +15,15 @@ import { BleConsole } from './BleConsole';
 import { ToastContainer } from './Toast';
 
 export function App({ embedded = false }) {
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(() => bleService.isGattConnected());
   const [isConnecting, setIsConnecting] = useState(false);
-  const [deviceName, setDeviceName] = useState('');
+  const [deviceName, setDeviceName] = useState(() => bleService.getDeviceName());
   const [isSupported] = useState(() => bleService.isSupported());
 
   // Active Tab
   const [activeTab, setActiveTab] = useState('wifi'); // 'wifi', 'console'
 
-  // ESP32 Status State
-  const [status, setStatus] = useState({
+  const defaultStatus = {
     device_code: 'ESP-FERTIGASI-01',
     serial_code: 'tes123',
     firmware: 'v2.2.0-BLE-WebSocket-Hybrid',
@@ -49,6 +48,12 @@ export function App({ embedded = false }) {
       level_air: 72.0,
       ec: 1.8,
     },
+  };
+
+  // ESP32 Status State
+  const [status, setStatus] = useState(() => {
+    const last = bleService.getLastStatus();
+    return last ? { ...defaultStatus, ...last } : defaultStatus;
   });
 
   // Wi-Fi Scanner & Operations State
@@ -57,7 +62,7 @@ export function App({ embedded = false }) {
   const [isConnectingWifi, setIsConnectingWifi] = useState(false);
 
   // Terminal & BLE Packet Logs
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState(() => bleService.getLogs());
 
   // Toast Notifications
   const [toasts, setToasts] = useState([]);
@@ -76,6 +81,26 @@ export function App({ embedded = false }) {
 
   // Initialize Subscriptions
   useEffect(() => {
+    // Sync state immediately if BLE singleton is already connected in this session
+    if (bleService.isGattConnected()) {
+      setIsConnected(true);
+      setDeviceName(bleService.getDeviceName());
+      const last = bleService.getLastStatus();
+      if (last) {
+        setStatus((prev) => ({
+          ...prev,
+          ...last,
+          valves: last.valves || prev.valves,
+          sensors: last.sensors || prev.sensors,
+        }));
+      }
+      setLogs(bleService.getLogs());
+      bleService.requestStatus().catch(() => {});
+    } else {
+      // Auto-reconnect silently if permission was granted before
+      bleService.tryAutoReconnect().catch(() => {});
+    }
+
     // 1. Connection change listener
     const unsubConn = bleService.on('connection_change', (data) => {
       if (data.connected) {
@@ -186,6 +211,14 @@ export function App({ embedded = false }) {
   const handleConnect = async () => {
     setIsConnecting(true);
     try {
+      if (bleService.device && !bleService.isGattConnected()) {
+        try {
+          await bleService.reconnect();
+          return;
+        } catch {
+          // If reconnect fails, proceed with requestDevice picker
+        }
+      }
       await bleService.connect();
     } catch (err) {
       console.error('BLE connection failed:', err);

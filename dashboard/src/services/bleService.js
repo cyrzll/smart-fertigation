@@ -22,6 +22,10 @@ class BleService {
     this.rxBuffer = '';
     this.decoder = new TextDecoder();
     this.encoder = new TextEncoder();
+    this.lastStatus = null;
+    this.logs = [];
+    this._boundHandleDisconnection = this.handleDisconnection.bind(this);
+    this._boundHandleNotification = this.handleNotification.bind(this);
   }
 
   /**
@@ -29,6 +33,34 @@ class BleService {
    */
   isSupported() {
     return typeof navigator !== 'undefined' && Boolean(navigator.bluetooth);
+  }
+
+  /**
+   * Check if GATT is actively connected
+   */
+  isGattConnected() {
+    return Boolean(this.isConnected && this.device && this.device.gatt && this.device.gatt.connected);
+  }
+
+  /**
+   * Get device name
+   */
+  getDeviceName() {
+    return this.device?.name || '';
+  }
+
+  /**
+   * Get last known status
+   */
+  getLastStatus() {
+    return this.lastStatus;
+  }
+
+  /**
+   * Get persistent log history
+   */
+  getLogs() {
+    return [...this.logs];
   }
 
   /**
@@ -70,13 +102,18 @@ class BleService {
    * Log message to subscribers
    */
   log(direction, text, isRaw = false) {
-    this.emit('log', {
+    const logEntry = {
       id: Math.random().toString(36).substring(2, 9),
       timestamp: new Date().toLocaleTimeString(),
       direction, // 'TX', 'RX', 'SYS', 'ERR'
       text,
       isRaw,
-    });
+    };
+    this.logs.push(logEntry);
+    if (this.logs.length > 150) {
+      this.logs.shift();
+    }
+    this.emit('log', logEntry);
   }
 
   /**
@@ -101,8 +138,9 @@ class BleService {
 
       this.log('SYS', `Perangkat dipilih: ${this.device.name} (${this.device.id})`);
 
-      // Add disconnect event listener
-      this.device.addEventListener('gattserverdisconnected', this.handleDisconnection.bind(this));
+      // Add disconnect event listener safely
+      this.device.removeEventListener('gattserverdisconnected', this._boundHandleDisconnection);
+      this.device.addEventListener('gattserverdisconnected', this._boundHandleDisconnection);
 
       // Connect to GATT Server
       this.log('SYS', 'Menghubungkan ke GATT Server ESP32...');
@@ -121,7 +159,8 @@ class BleService {
       // Enable Notifications
       this.log('SYS', 'Mengaktifkan notifikasi data TX...');
       await this.txChar.startNotifications();
-      this.txChar.addEventListener('characteristicvaluechanged', this.handleNotification.bind(this));
+      this.txChar.removeEventListener('characteristicvaluechanged', this._boundHandleNotification);
+      this.txChar.addEventListener('characteristicvaluechanged', this._boundHandleNotification);
 
       this.isConnected = true;
       this.emit('connection_change', {
@@ -186,6 +225,7 @@ class BleService {
 
     switch (type) {
       case 'STATUS':
+        this.lastStatus = data;
         this.emit('status', data);
         break;
       case 'WIFI_SCAN_RESULT':
@@ -239,12 +279,16 @@ class BleService {
 
     try {
       this.log('SYS', 'Mencoba menyambungkan kembali Bluetooth...');
+      this.device.removeEventListener('gattserverdisconnected', this._boundHandleDisconnection);
+      this.device.addEventListener('gattserverdisconnected', this._boundHandleDisconnection);
+
       this.server = await this.device.gatt.connect();
       this.service = await this.server.getPrimaryService(BLE_CONFIG.SERVICE_UUID);
       this.rxChar = await this.service.getCharacteristic(BLE_CONFIG.RX_UUID);
       this.txChar = await this.service.getCharacteristic(BLE_CONFIG.TX_UUID);
       await this.txChar.startNotifications();
-      this.txChar.addEventListener('characteristicvaluechanged', this.handleNotification.bind(this));
+      this.txChar.removeEventListener('characteristicvaluechanged', this._boundHandleNotification);
+      this.txChar.addEventListener('characteristicvaluechanged', this._boundHandleNotification);
 
       this.isConnected = true;
       this.emit('connection_change', {
@@ -262,6 +306,46 @@ class BleService {
       this.emit('connection_change', { connected: false, error: err.message });
       throw err;
     }
+  }
+
+  /**
+   * Try auto-reconnect using existing device or permitted devices in browser
+   */
+  async tryAutoReconnect() {
+    if (this.isGattConnected()) {
+      return true;
+    }
+
+    if (this.device) {
+      try {
+        await this.reconnect();
+        return true;
+      } catch (e) {
+        console.warn('Auto reconnect with cached device failed:', e);
+      }
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.bluetooth && navigator.bluetooth.getDevices) {
+      try {
+        const devices = await navigator.bluetooth.getDevices();
+        if (devices && devices.length > 0) {
+          const espDevice = devices.find(d => 
+            d.name?.startsWith(BLE_CONFIG.DEVICE_NAME_PREFIX) || 
+            d.name?.includes('Fertigation') ||
+            d.name?.includes('ESP')
+          ) || devices[0];
+
+          if (espDevice) {
+            this.device = espDevice;
+            await this.reconnect();
+            return true;
+          }
+        }
+      } catch (err) {
+        console.warn('Auto reconnect via getDevices failed:', err);
+      }
+    }
+    return false;
   }
 
   /**
