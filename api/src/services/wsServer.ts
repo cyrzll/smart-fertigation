@@ -366,7 +366,7 @@ export function initWebSocketServer(server: HttpServer) {
           });
 
           if (payload.type === 'TELEMETRY') {
-            const { suhu, kelembaban, media, media_do, level_air, ec, tds, status } = payload;
+            const { suhu, suhu_air, kelembaban, media, media_do, level_air, ec, tds, status } = payload;
             const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
             const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
 
@@ -376,10 +376,11 @@ export function initWebSocketServer(server: HttpServer) {
               lastDbTelemetryInsert.set(deviceCode, nowTime);
               try {
                 await pool.query(
-                  'INSERT INTO sensor_telemetry (device_code, suhu, kelembaban, media, level_air, ec, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                  'INSERT INTO sensor_telemetry (device_code, suhu, suhu_air, kelembaban, media, level_air, ec, tds, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                   [
                     deviceSocket.telemetryDeviceCode || deviceCode,
                     suhu != null ? Number(suhu) : null,
+                    suhu_air != null ? Number(suhu_air) : null,
                     kelembaban != null ? Number(kelembaban) : null,
                     media != null ? Number(media) : null,
                     level_air != null ? Number(level_air) : null,
@@ -399,6 +400,7 @@ export function initWebSocketServer(server: HttpServer) {
               serial_code: serialCode,
               telemetry: {
                 suhu,
+                suhu_air,
                 kelembaban,
                 media,
                 media_do,

@@ -37,6 +37,8 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <DHT.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 #include <time.h>
 
 // ESP32 BLE Core Libraries
@@ -48,7 +50,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.7.0-Soil-Moisture-FC28";
+const char* firmware_version = "v2.8.0-DS18B20-Water-Temp";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -124,6 +126,7 @@ bool is_authenticated = false;
 //   - SENSOR_DHT_PIN     : GPIO 33 -> Pin OUT/DATA DHT22 (Suhu + Kelembapan Udara)
 //   - SENSOR_SOIL_AO_PIN : GPIO 34 (ADC1 ESP32) -> Pin AO Sensor Kelembapan Tanah (Soil Moisture)
 //   - SENSOR_SOIL_DO_PIN : GPIO 35 (Digital In) -> Pin DO Sensor Kelembapan Tanah (Threshold LM393)
+//   - SENSOR_DS18B20_PIN : GPIO 19 -> Pin DATA (Kabel Kuning) Sensor Suhu Air DS18B20 Waterproof
 //
 // Pinout Sensor Suhu DHT22 (3-Pin: +, -, OUT):
 //   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
@@ -135,18 +138,25 @@ bool is_authenticated = false;
 //   - 'GND' : Ground ESP32
 //   - 'AO'  : Analog Output          -> Hubungkan ke GPIO 34 (D34 / ADC1) ESP32
 //   - 'DO'  : Digital Output         -> Hubungkan ke GPIO 35 (D35) ESP32
+//
+// Pinout Sensor Suhu Air DS18B20 Waterproof (Kabel 3-Warna):
+//   - 'Kuning' (atau Putih) : Data Signal (1-Wire) -> Hubungkan ke GPIO 19 (D19) ESP32
+//   - 'Merah'               : Power VCC 3.3V / 5V  -> Hubungkan ke 3.3V atau VIN 5V ESP32
+//   - 'Hitam'               : Ground               -> Hubungkan ke GND ESP32
+//   - Catatan: Resistor pull-up 4.7kΩ antara kabel Merah (VCC) dan Kuning (DATA)
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
 #define SENSOR_DHT_PIN         33   // Pin OUT/DATA DHT22 (GPIO 33)
 #define SENSOR_DHT_TYPE        DHT22
 #define SENSOR_SOIL_AO_PIN     34   // Pin AO Sensor Soil Moisture (GPIO 34 - ADC1)
 #define SENSOR_SOIL_DO_PIN     35   // Pin DO Sensor Soil Moisture (GPIO 35 - Digital Input)
+#define SENSOR_DS18B20_PIN     19   // Pin DATA (Kuning) Sensor Suhu Air DS18B20 (GPIO 19)
 
 #define DEFAULT_SOIL_DRY_VOLTAGE 2.80 // Tegangan saat tanah kering / di udara (~0%)
 #define DEFAULT_SOIL_WET_VOLTAGE 1.00 // Tegangan saat tanah basah / terendam air (~100%)
 #define DEFAULT_TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS default (dapat dikalibrasi dinamis via Flash NVS)
 #define DEFAULT_TDS_AIR_BASELINE        1.91 // Tegangan baseline udara kering aktual hardware (1.910V di udara)
 #define DEFAULT_TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
-#define WATER_TEMP_ESTIMATE             25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
+#define WATER_TEMP_ESTIMATE             25.0 // Estimasi cadangan jika DS18B20 belum terpasang
 
 // Faktor Kalibrasi & Baseline Aktif (Disimpan & Dimuat dari Flash NVS)
 float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
@@ -163,6 +173,8 @@ float tds_air_baseline = DEFAULT_TDS_AIR_BASELINE;
 WebSocketsClient webSocket;
 Ticker ledTicker;
 DHT dht(SENSOR_DHT_PIN, SENSOR_DHT_TYPE);
+OneWire oneWire(SENSOR_DS18B20_PIN);
+DallasTemperature ds18b20(&oneWire);
 
 // BLE Server & Characteristic Pointers
 BLEServer *pBleServer = NULL;
@@ -272,20 +284,24 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
 // Sensor Telemetry Data (Real Hardware Reading)
 float sensorTDS = 0.0;
 float sensorEC = 0.0;
-float sensorTemp = 25.0;
+float sensorTemp = 25.0;      // Suhu Udara Lingkungan (°C) dari DHT22
+float sensorWaterTemp = 25.0; // Suhu Air Nutrisi (°C) dari DS18B20 Waterproof
 float sensorHumidity = 0.0;
 float sensorMedia = 0.0;      // Kelembapan Media Tanam (%) dari Pin AO (GPIO 34)
 bool sensorMediaDO = false;   // Status Digital DO (GPIO 35): LOW = Basah (Threshold ON), HIGH = Kering
 bool sensorTempValid = false;
+bool sensorWaterTempValid = false;
 bool sensorHumidityValid = false;
 bool sensorMediaValid = false;
 
 unsigned long lastSensorCheck = 0;
 float lastSentTDS = -999.0;
 float lastSentTemp = -999.0;
+float lastSentWaterTemp = -999.0;
 float lastSentHumidity = -999.0;
 float lastSentMedia = -999.0;
 unsigned long lastDhtRead = 0;
+unsigned long lastDs18b20Read = 0;
 
 float filteredTdsVoltage = 0.0;
 float smoothedTDS = 0.0;
@@ -317,6 +333,25 @@ float readTempSensor() {
     sensorHumidityValid = true;
   }
   return measuredTemp;
+}
+
+// Fungsi Membaca Suhu Air Nutrisi (°C) dari Probe DS18B20 Waterproof (Pin GPIO 19)
+float readWaterTempSensor() {
+  unsigned long now = millis();
+  if (lastDs18b20Read != 0 && now - lastDs18b20Read < 1000) return sensorWaterTemp;
+  lastDs18b20Read = now;
+
+  ds18b20.requestTemperatures();
+  float tempC = ds18b20.getTempCByIndex(0);
+
+  // Jika probe terputus (-127°C) atau reset power (85°C)
+  if (tempC == DEVICE_DISCONNECTED_C || tempC < -40.0 || tempC > 110.0 || tempC == 85.0) {
+    return sensorWaterTemp;
+  }
+
+  sensorWaterTemp = tempC;
+  sensorWaterTempValid = true;
+  return sensorWaterTemp;
 }
 
 // Fungsi simpan faktor kalibrasi TDS ke Flash Memory (NVS)
@@ -434,8 +469,9 @@ float readTDSSensor() {
     filteredTdsVoltage = (filteredTdsVoltage * 0.80) + (voltage * 0.20);
   }
 
-  // Kompensasi suhu larutan: fComp = 1.0 + 0.02 * (T - 25.0)
-  float compensationCoefficient = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  // Kompensasi suhu larutan aktual dari probe DS18B20 jika terpasang (fallback: 25.0°C)
+  float actualWaterTemp = sensorWaterTempValid ? sensorWaterTemp : WATER_TEMP_ESTIMATE;
+  float compensationCoefficient = 1.0 + 0.02 * (actualWaterTemp - 25.0);
   float compensationVoltage = filteredTdsVoltage / compensationCoefficient;
 
   // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
@@ -766,6 +802,7 @@ void sendBleStatus() {
 
   // Baca sensor fisik
   sensorTemp = readTempSensor();
+  sensorWaterTemp = readWaterTempSensor();
   sensorTDS = readTDSSensor();
   sensorMedia = readSoilMoistureSensor();
   sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
@@ -775,6 +812,8 @@ void sendBleStatus() {
   sensors["ec"] = sensorEC;
   if (sensorTempValid) sensors["suhu"] = sensorTemp;
   else sensors["suhu"] = nullptr;
+  if (sensorWaterTempValid) sensors["suhu_air"] = sensorWaterTemp;
+  else sensors["suhu_air"] = nullptr;
   if (sensorHumidityValid) sensors["kelembaban"] = sensorHumidity;
   else sensors["kelembaban"] = nullptr;
   if (sensorMediaValid) sensors["media"] = sensorMedia;
@@ -1263,6 +1302,7 @@ void sendWsHeartbeat() {
 void sendWsTelemetry() {
   lastSentTDS = sensorTDS;
   lastSentTemp = sensorTemp;
+  lastSentWaterTemp = sensorWaterTemp;
   lastSentHumidity = sensorHumidity;
   lastSentMedia = sensorMedia;
 
@@ -1274,6 +1314,8 @@ void sendWsTelemetry() {
   doc["ec"] = sensorEC;
   if (sensorTempValid) doc["suhu"] = sensorTemp;
   else doc["suhu"] = nullptr;
+  if (sensorWaterTempValid) doc["suhu_air"] = sensorWaterTemp;
+  else doc["suhu_air"] = nullptr;
   if (sensorHumidityValid) doc["kelembaban"] = sensorHumidity;
   else doc["kelembaban"] = nullptr;
   if (sensorMediaValid) doc["media"] = sensorMedia;
@@ -1284,8 +1326,8 @@ void sendWsTelemetry() {
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  Serial.printf("[WS Telemetry] Suhu: %.1f °C | Udara: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
-                sensorTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+  Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: %.1f °C | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
+                sensorTemp, sensorWaterTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
 }
 
 // Send Command Completed confirmation
@@ -1448,7 +1490,10 @@ void setup() {
   pinMode(SENSOR_TDS_PIN, INPUT);
   pinMode(SENSOR_SOIL_AO_PIN, INPUT);
   pinMode(SENSOR_SOIL_DO_PIN, INPUT);
+  pinMode(SENSOR_DS18B20_PIN, INPUT_PULLUP);
   dht.begin();
+  ds18b20.begin();
+  ds18b20.setResolution(11);
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
@@ -1569,6 +1614,9 @@ void loop() {
     } else if (cmd == "RAW_SOIL" || cmd == "raw_soil") {
       Serial.printf("[SOIL Debug] Voltase AO: %.3f V (%.1f mV) | Kelembapan Media: %.1f %% | Pin DO (Digital): %s\n",
                     filteredSoilVoltage, filteredSoilVoltage * 1000.0, sensorMedia, sensorMediaDO ? "KERING (HIGH)" : "BASAH (LOW)");
+    } else if (cmd == "RAW_DS18B20" || cmd == "raw_ds18b20" || cmd == "RAW_WATER" || cmd == "raw_water") {
+      Serial.printf("[DS18B20 Debug] Suhu Air Nutrisi: %.2f °C | Status: %s (Pin GPIO %d)\n",
+                    sensorWaterTemp, sensorWaterTempValid ? "VALID" : "TIDAK TERHUBUNG", SENSOR_DS18B20_PIN);
     }
   }
 
@@ -1593,14 +1641,16 @@ void loop() {
   if (now - lastSensorCheck >= 800 || lastSensorCheck == 0) {
     lastSensorCheck = now;
     float curTemp = readTempSensor();
-    // TDS memakai sensorTemp untuk kompensasi; perbarui lebih dahulu.
     sensorTemp = curTemp;
+    float curWaterTemp = readWaterTempSensor();
+    sensorWaterTemp = curWaterTemp;
     float curTDS = readTDSSensor();
     float curMedia = readSoilMoistureSensor();
 
     // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / tanah disiram / suhu berubah)
     bool significantChange = (fabs(curTDS - lastSentTDS) >= 25.0)
       || (fabs(curTemp - lastSentTemp) >= 0.8)
+      || (sensorWaterTempValid && fabs(curWaterTemp - lastSentWaterTemp) >= 0.5)
       || (sensorHumidityValid && fabs(sensorHumidity - lastSentHumidity) >= 2.0)
       || (sensorMediaValid && fabs(curMedia - lastSentMedia) >= 2.5);
 
@@ -1609,6 +1659,7 @@ void loop() {
       lastTelemetry = now;
       sensorTDS = curTDS;
       sensorTemp = curTemp;
+      sensorWaterTemp = curWaterTemp;
       sensorMedia = curMedia;
       sensorEC = sensorTDS / 500.0;
 

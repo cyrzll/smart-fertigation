@@ -270,6 +270,7 @@ export async function initDb() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         device_code VARCHAR(255) DEFAULT 'ESP-FERTIGASI-01',
         suhu FLOAT DEFAULT NULL,
+        suhu_air FLOAT DEFAULT NULL,
         kelembaban FLOAT DEFAULT NULL,
         media FLOAT DEFAULT NULL,
         level_air FLOAT DEFAULT NULL,
@@ -282,6 +283,10 @@ export async function initDb() {
     `);
         try {
             await conn.query('ALTER TABLE sensor_telemetry ADD COLUMN tds FLOAT NULL AFTER ec');
+        }
+        catch (_) { }
+        try {
+            await conn.query('ALTER TABLE sensor_telemetry ADD COLUMN suhu_air FLOAT NULL AFTER suhu');
         }
         catch (_) { }
         const [sensorCount] = await conn.query('SELECT COUNT(*) as count FROM sensor_telemetry');

@@ -135,6 +135,18 @@ const HourlyComparisonChart = ({ rows }) => {
         pointHoverRadius: 5,
         borderWidth: 2.5,
       },
+      {
+        label: 'Rata-rata Suhu Air',
+        data: rows.map((row) => row.suhu_air),
+        borderColor: '#06B6D4',
+        backgroundColor: '#06B6D4',
+        yAxisID: 'ySuhu',
+        tension: 0.35,
+        spanGaps: true,
+        pointRadius: 3.5,
+        pointHoverRadius: 5,
+        borderWidth: 2.5,
+      },
     ],
   };
 
@@ -152,10 +164,11 @@ const HourlyComparisonChart = ({ rows }) => {
         callbacks: {
           label: (context) => {
             if (context.raw == null) return null;
+            if (context.dataset.label === 'Rata-rata Suhu Air') return ` Suhu Air: ${Number(context.raw).toFixed(1)} °C`;
             if (context.dataset.label === 'Rata-rata Media Tanam') return ` Media Tanam: ${Number(context.raw).toFixed(1)} %`;
             if (context.dataset.yAxisID === 'yHumidity') return ` Kelembapan Udara: ${Number(context.raw).toFixed(1)} %`;
             if (context.dataset.yAxisID === 'yTds') return ` TDS: ${Math.round(Number(context.raw))} PPM`;
-            return ` Suhu: ${Number(context.raw).toFixed(1)} °C`;
+            return ` Suhu Udara: ${Number(context.raw).toFixed(1)} °C`;
           },
           footer: (items) => {
             const index = items[0]?.dataIndex;
@@ -365,6 +378,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
   const tdsVal = currentTelemetry.tds != null && !isNaN(Number(currentTelemetry.tds)) ? Number(currentTelemetry.tds) : (currentTelemetry.ec != null ? Number(currentTelemetry.ec) * 500.0 : null);
   const ecVal = currentTelemetry.ec != null && !isNaN(Number(currentTelemetry.ec)) ? Number(currentTelemetry.ec) : (tdsVal != null ? tdsVal / 500.0 : null);
   const suhuVal = currentTelemetry.suhu != null && !isNaN(Number(currentTelemetry.suhu)) ? Number(currentTelemetry.suhu) : null;
+  const suhuAirVal = currentTelemetry.suhu_air != null && !isNaN(Number(currentTelemetry.suhu_air)) ? Number(currentTelemetry.suhu_air) : null;
 
   // Deteksi status koneksi ESP32 (realtime WebSocket, DB device status, atau usia telemetri terakhir)
   const isEspOnline = useMemo(() => {
@@ -415,10 +429,19 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
     return { label: 'Hangat (Tinggi)', color: 'bg-red-50 text-red-700 border-red-300', dot: 'bg-red-500' };
   };
 
+  // Status helper untuk suhu air nutrisi DS18B20 (°C)
+  const getSuhuAirStatus = (suhuAir) => {
+    if (suhuAir == null) return { label: 'Tidak Terhubung', color: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' };
+    if (suhuAir < 18) return { label: 'Dingin (<18°C)', color: 'bg-blue-50 text-blue-700 border-blue-300', dot: 'bg-blue-500' };
+    if (suhuAir <= 26) return { label: 'Ideal (20-26°C)', color: 'bg-[#E8F2DF] text-[#3A6B2A] border-[#C8D9B0]', dot: 'bg-[#7BAF5A]' };
+    return { label: 'Hangat (>26°C)', color: 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-500' };
+  };
+
   const humidityStatus = getHumidityStatus(humidityVal);
   const mediaStatus = getMediaStatus(mediaVal);
   const tdsStatus = getTdsStatus(tdsVal);
   const suhuStatus = getSuhuStatus(suhuVal);
+  const suhuAirStatus = getSuhuAirStatus(suhuAirVal);
 
   const minuteTelemetries = useMemo(() => {
     const seenMinutes = new Set();
@@ -445,10 +468,11 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
           media: row.avg_media != null && !isNaN(Number(row.avg_media)) ? Number(row.avg_media) : null,
           tds: row.avg_tds != null && !isNaN(Number(row.avg_tds)) ? Number(row.avg_tds) : null,
           suhu: row.avg_suhu != null && !isNaN(Number(row.avg_suhu)) ? Number(row.avg_suhu) : null,
+          suhu_air: row.avg_suhu_air != null && !isNaN(Number(row.avg_suhu_air)) ? Number(row.avg_suhu_air) : null,
           samples: Number(row.sample_count) || 0,
         }])
     );
-    return Array.from({ length: 24 }, (_, hour) => rowsByHour.get(hour) || { hour, kelembaban: null, media: null, tds: null, suhu: null, samples: 0 });
+    return Array.from({ length: 24 }, (_, hour) => rowsByHour.get(hour) || { hour, kelembaban: null, media: null, tds: null, suhu: null, suhu_air: null, samples: 0 });
   }, [data?.hourlyTelemetries, activeChartDay]);
 
   return (
@@ -671,7 +695,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 3: SENSOR TDS & EC NUTRISI (TDS Meter V1.0 - GPIO 32) */}
+          {/* Card 3: SENSOR TDS & EC NUTRISI (TDS Meter V1.0 - GPIO 32 & DS18B20 Suhu Air - GPIO 19) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -680,7 +704,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor TDS & EC Nutrisi</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Konsentrasi nutrisi air</p>
+                  <p className="text-[11px] text-[#8A9B7A]">Konsentrasi nutrisi & suhu air</p>
                 </div>
               </div>
 
@@ -690,7 +714,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
               </span>
             </div>
 
-            <div className="flex flex-wrap items-baseline gap-3 my-2">
+            <div className="flex flex-wrap items-baseline gap-2.5 my-2">
               <div className="flex items-baseline space-x-1.5">
                 <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
                   {tdsVal !== null ? Math.round(tdsVal) : '—'}
@@ -701,6 +725,12 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
               {ecVal !== null && (
                 <div className="px-2.5 py-1 rounded-lg bg-[#FAFAF7] border border-[#D4DFC8] font-mono text-xs font-bold text-[#3A6B2A]">
                   ~{ecVal.toFixed(2)} mS/cm EC
+                </div>
+              )}
+
+              {suhuAirVal !== null && (
+                <div className="px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200 font-mono text-xs font-bold text-sky-700" title="Suhu Air Nutrisi DS18B20 (GPIO 19)">
+                  Air: {suhuAirVal.toFixed(1)} °C
                 </div>
               )}
             </div>
@@ -733,7 +763,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
             </div>
           </div>
 
-          {/* Card 4: SENSOR SUHU LINGKUNGAN DHT22 (Pin OUT - GPIO 33) */}
+          {/* Card 4: SENSOR SUHU LINGKUNGAN & SUHU AIR (DHT22: GPIO 33 & DS18B20: GPIO 19) */}
           <div className="bg-white border-2 border-[#C8D9B0] hover:border-[#7BAF5A] rounded-2xl p-5 shadow-xs transition-all relative overflow-hidden group">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2.5">
@@ -741,8 +771,8 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   <Thermometer className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[#2D3B2D]">Sensor Suhu DHT22</h4>
-                  <p className="text-[11px] text-[#8A9B7A]">Suhu lingkungan kebun</p>
+                  <h4 className="text-sm font-bold text-[#2D3B2D]">Suhu Udara & Air</h4>
+                  <p className="text-[11px] text-[#8A9B7A]">DHT22 (D33) & DS18B20 (D19)</p>
                 </div>
               </div>
 
@@ -752,11 +782,19 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
               </span>
             </div>
 
-            <div className="flex items-baseline space-x-2 my-2">
-              <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
-                {suhuVal !== null ? suhuVal.toFixed(1) : '—'}
-              </span>
-              {suhuVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">°C</span>}
+            <div className="flex flex-wrap items-baseline gap-2.5 my-2">
+              <div className="flex items-baseline space-x-1.5">
+                <span className="text-4xl sm:text-5xl font-black text-[#2D3B2D] font-mono tracking-tight">
+                  {suhuVal !== null ? suhuVal.toFixed(1) : '—'}
+                </span>
+                {suhuVal !== null && <span className="text-sm font-bold text-[#8A9B7A]">°C</span>}
+              </div>
+
+              {suhuAirVal !== null && (
+                <div className="px-2.5 py-1 rounded-lg bg-[#E8F2DF] border border-[#C8D9B0] font-mono text-xs font-bold text-[#3A6B2A]" title="Suhu Air Nutrisi DS18B20">
+                  Air: {suhuAirVal.toFixed(1)} °C
+                </div>
+              )}
             </div>
 
             {/* Visual Gauge Bar Rentang Suhu 0 - 50 °C */}
@@ -931,6 +969,7 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                   const rowTds = row.tds != null && !isNaN(Number(row.tds)) ? Number(row.tds) : (row.ec != null ? Number(row.ec) * 500 : null);
                   const rowEc = row.ec != null && !isNaN(Number(row.ec)) ? Number(row.ec) : (rowTds != null ? rowTds / 500 : null);
                   const rowSuhu = row.suhu != null && !isNaN(Number(row.suhu)) ? Number(row.suhu) : null;
+                  const rowSuhuAir = row.suhu_air != null && !isNaN(Number(row.suhu_air)) ? Number(row.suhu_air) : null;
                   const stHumidity = getHumidityStatus(rowHumidity);
                   const stMedia = getMediaStatus(rowMedia);
                   const stTds = getTdsStatus(rowTds);
@@ -942,13 +981,20 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
                         {formatWibTime(row.created_at)}
                       </td>
                       <td className="py-2.5 px-3">
-                        {rowSuhu !== null ? (
-                          <span className="font-mono font-bold text-sm text-[#0284C7]">
-                            {rowSuhu.toFixed(1)} °C
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 font-mono">—</span>
-                        )}
+                        <div className="flex flex-col">
+                          {rowSuhu !== null ? (
+                            <span className="font-mono font-bold text-sm text-[#0284C7]">
+                              {rowSuhu.toFixed(1)} °C
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-mono">—</span>
+                          )}
+                          {rowSuhuAir !== null && (
+                            <span className="text-[10px] font-mono font-bold text-sky-700">
+                              Air: {rowSuhuAir.toFixed(1)} °C
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stSuhu.color}`}>
@@ -1063,8 +1109,9 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
         <div className="flex flex-wrap items-center gap-4 text-[11px] font-medium text-[#5A6B5A]">
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#5A8A3A]" />Kelembapan Udara</span>
           <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#059669]" />Media Tanam</span>
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-amber-600" />Rata-rata TDS</span>
-          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#0284C7]" />Rata-rata Suhu</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-amber-600" />TDS Nutrisi</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#0284C7]" />Suhu Udara</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-0.5 rounded bg-[#06B6D4]" />Suhu Air</span>
           {activeChartDay && <span className="ml-auto font-mono text-[#8A9B7A]">{formatChartDay(activeChartDay)}</span>}
         </div>
 

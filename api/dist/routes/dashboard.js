@@ -63,7 +63,7 @@ app.get('/', async (c) => {
         const latestTelemetry = telemetryRes.length > 0 ? telemetryRes[0] : null;
         // Ambil satu pencatatan terbaru untuk setiap menit agar status tidak berulang
         // saat ESP32 mengirim telemetri beberapa kali dalam menit yang sama.
-        const [recentTelemetries] = await pool.query(`SELECT st.id, st.device_code, st.suhu, st.kelembaban, st.media,
+        const [recentTelemetries] = await pool.query(`SELECT st.id, st.device_code, st.suhu, st.suhu_air, st.kelembaban, st.media,
               st.level_air, st.ec, st.tds, st.status, st.created_at
        FROM sensor_telemetry st
        INNER JOIN (
@@ -81,6 +81,7 @@ app.get('/', async (c) => {
               ROUND(AVG(media), 1) AS avg_media,
               ROUND(AVG(COALESCE(tds, ec * 500)), 0) AS avg_tds,
               ROUND(AVG(suhu), 1) AS avg_suhu,
+              ROUND(AVG(suhu_air), 1) AS avg_suhu_air,
               COUNT(*) AS sample_count
        FROM sensor_telemetry
        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
