@@ -151,8 +151,11 @@ export function broadcastToDashboards(data: any) {
 export function getOnlineDeviceCodes(): string[] {
   const codes = new Set<string>();
   for (const dev of activeDevices.values()) {
-    if (dev.deviceCode) codes.add(dev.deviceCode);
-    if (dev.serialCode) codes.add(dev.serialCode);
+    if (dev.ws && dev.ws.readyState === WebSocket.OPEN) {
+      if (dev.deviceCode) codes.add(dev.deviceCode);
+      if (dev.serialCode) codes.add(dev.serialCode);
+      if (dev.telemetryDeviceCode) codes.add(dev.telemetryDeviceCode);
+    }
   }
   return Array.from(codes);
 }
@@ -363,7 +366,7 @@ export function initWebSocketServer(server: HttpServer) {
           });
 
           if (payload.type === 'TELEMETRY') {
-            const { suhu, kelembaban, media, level_air, ec, tds, status } = payload;
+            const { suhu, kelembaban, media, media_do, level_air, ec, tds, status } = payload;
             const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
             const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
 
@@ -398,6 +401,7 @@ export function initWebSocketServer(server: HttpServer) {
                 suhu,
                 kelembaban,
                 media,
+                media_do,
                 level_air,
                 ec: finalEc != null ? Number(finalEc.toFixed(2)) : null,
                 tds: finalTds != null ? Number(finalTds.toFixed(0)) : null,
@@ -476,6 +480,7 @@ export function findDeviceSocket(deviceCode?: string, serialCode?: string): Devi
   const c1 = deviceCode ? deviceCode.trim().toLowerCase() : '';
   const c2 = serialCode ? serialCode.trim().toLowerCase() : '';
 
+  // 1. Direct key lookups
   if (deviceCode && activeDevices.has(deviceCode.trim())) {
     const dev = activeDevices.get(deviceCode.trim())!;
     if (dev.ws.readyState === WebSocket.OPEN) return dev;
@@ -485,15 +490,33 @@ export function findDeviceSocket(deviceCode?: string, serialCode?: string): Devi
     if (dev.ws.readyState === WebSocket.OPEN) return dev;
   }
 
+  // 2. Iterate all open sockets
+  const openSockets: DeviceSocket[] = [];
+  const seenSockets = new Set<WebSocket>();
+
   for (const dev of activeDevices.values()) {
     if (dev.ws.readyState !== WebSocket.OPEN) continue;
+    if (!seenSockets.has(dev.ws)) {
+      seenSockets.add(dev.ws);
+      openSockets.push(dev);
+    }
+  }
+
+  for (const dev of openSockets) {
     const dCode = dev.deviceCode ? dev.deviceCode.toLowerCase() : '';
     const sCode = dev.serialCode ? dev.serialCode.toLowerCase() : '';
     const tCode = dev.telemetryDeviceCode ? dev.telemetryDeviceCode.toLowerCase() : '';
 
-    if (c1 && (dCode === c1 || sCode === c1 || tCode === c1)) return dev;
-    if (c2 && (dCode === c2 || sCode === c2 || tCode === c2)) return dev;
+    if (c1 && (dCode === c1 || sCode === c1 || tCode === c1 || dCode.includes(c1) || c1.includes(dCode))) return dev;
+    if (c2 && (dCode === c2 || sCode === c2 || tCode === c2 || sCode.includes(c2) || c2.includes(sCode))) return dev;
   }
+
+  // 3. Fallback: If only 1 active device socket is online, route to it
+  if (openSockets.length === 1) {
+    console.log(`🔌 [WebSocket] Fallback to the single active connected device (${openSockets[0].deviceCode}) for query '${deviceCode || serialCode || 'ANY'}'`);
+    return openSockets[0];
+  }
+
   return null;
 }
 

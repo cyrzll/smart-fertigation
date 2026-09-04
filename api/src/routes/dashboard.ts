@@ -105,6 +105,7 @@ app.get('/', async (c) => {
       `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
               HOUR(created_at) AS hour,
               ROUND(AVG(kelembaban), 1) AS avg_kelembaban,
+              ROUND(AVG(media), 1) AS avg_media,
               ROUND(AVG(COALESCE(tds, ec * 500)), 0) AS avg_tds,
               ROUND(AVG(suhu), 1) AS avg_suhu,
               COUNT(*) AS sample_count

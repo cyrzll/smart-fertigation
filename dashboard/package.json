@@ -12,12 +12,12 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/node": "^11.1.4",
-    "@astrojs/react": "^6.0.4",
+    "@astrojs/node": "^11.1.5",
+    "@astrojs/react": "^6.0.5",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "astro": "^7.2.4",
+    "astro": "^7.3.1",
     "axios": "^1.19.0",
     "chart.js": "^4.5.1",
     "goey-toast": "^0.5.0",

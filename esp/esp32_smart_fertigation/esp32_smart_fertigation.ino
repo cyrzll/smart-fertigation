@@ -48,7 +48,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.6.0-DHT22-Temperature-Humidity";
+const char* firmware_version = "v2.7.0-Soil-Moisture-FC28";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -120,23 +120,37 @@ bool is_authenticated = false;
 #define STATUS_GREEN_PIN     18
 
 // Pin Konfigurasi Sensor Fisik:
-//   - SENSOR_TDS_PIN  : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
-//   - SENSOR_DHT_PIN  : GPIO 33 -> Pin OUT/DATA DHT22 (Suhu + Kelembapan Udara)
+//   - SENSOR_TDS_PIN     : GPIO 32 (ADC1 ESP32) -> Pin A Modul TDS Meter V1.0 [TERPASANG AKTIF]
+//   - SENSOR_DHT_PIN     : GPIO 33 -> Pin OUT/DATA DHT22 (Suhu + Kelembapan Udara)
+//   - SENSOR_SOIL_AO_PIN : GPIO 34 (ADC1 ESP32) -> Pin AO Sensor Kelembapan Tanah (Soil Moisture)
+//   - SENSOR_SOIL_DO_PIN : GPIO 35 (Digital In) -> Pin DO Sensor Kelembapan Tanah (Threshold LM393)
 //
-// Pinout Sensor Suhu (3-Pin: +, -, OUT):
+// Pinout Sensor Suhu DHT22 (3-Pin: +, -, OUT):
 //   - '+'   : Power VCC 3.3V atau 5V -> Hubungkan ke 3.3V ESP32 (disarankan) atau VIN 5V
 //   - '-'   : Ground                 -> Hubungkan ke GND ESP32
 //   - 'OUT' : Data Digital            -> Hubungkan ke GPIO 33 (D33) ESP32
+//
+// Pinout Sensor Kelembapan Tanah / Soil Moisture (4-Pin: VCC, GND, DO, AO):
+//   - 'VCC' : Power 3.3V atau 5V (VIN) ESP32
+//   - 'GND' : Ground ESP32
+//   - 'AO'  : Analog Output          -> Hubungkan ke GPIO 34 (D34 / ADC1) ESP32
+//   - 'DO'  : Digital Output         -> Hubungkan ke GPIO 35 (D35) ESP32
 #define SENSOR_TDS_PIN         32   // Pin A Modul Sensor TDS Meter V1.0 (GPIO 32)
 #define SENSOR_DHT_PIN         33   // Pin OUT/DATA DHT22 (GPIO 33)
 #define SENSOR_DHT_TYPE        DHT22
+#define SENSOR_SOIL_AO_PIN     34   // Pin AO Sensor Soil Moisture (GPIO 34 - ADC1)
+#define SENSOR_SOIL_DO_PIN     35   // Pin DO Sensor Soil Moisture (GPIO 35 - Digital Input)
 
+#define DEFAULT_SOIL_DRY_VOLTAGE 2.80 // Tegangan saat tanah kering / di udara (~0%)
+#define DEFAULT_SOIL_WET_VOLTAGE 1.00 // Tegangan saat tanah basah / terendam air (~100%)
 #define DEFAULT_TDS_CALIBRATION_FACTOR  1.0  // Faktor kalibrasi TDS default (dapat dikalibrasi dinamis via Flash NVS)
+#define DEFAULT_TDS_AIR_BASELINE        1.91 // Tegangan baseline udara kering aktual hardware (1.910V di udara)
 #define DEFAULT_TEMP_CALIBRATION_OFFSET 0.0  // Offset kalibrasi Suhu (°C)
 #define WATER_TEMP_ESTIMATE             25.0 // DHT22 mengukur udara; kompensasi TDS tetap memakai estimasi suhu air
 
-// Faktor Kalibrasi Aktif (Disimpan & Dimuat dari Flash NVS)
+// Faktor Kalibrasi & Baseline Aktif (Disimpan & Dimuat dari Flash NVS)
 float tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
+float tds_air_baseline = DEFAULT_TDS_AIR_BASELINE;
 
 // Logika Relay Valve (Active-LOW: LOW = Valve Terbuka / ON, HIGH = Valve Tertutup / OFF)
 #define RELAY_OPEN_STATE   LOW   // Sinyal LOW (0V) untuk mengaktifkan relay / membuka valve
@@ -260,23 +274,22 @@ float sensorTDS = 0.0;
 float sensorEC = 0.0;
 float sensorTemp = 25.0;
 float sensorHumidity = 0.0;
+float sensorMedia = 0.0;      // Kelembapan Media Tanam (%) dari Pin AO (GPIO 34)
+bool sensorMediaDO = false;   // Status Digital DO (GPIO 35): LOW = Basah (Threshold ON), HIGH = Kering
 bool sensorTempValid = false;
 bool sensorHumidityValid = false;
+bool sensorMediaValid = false;
 
 unsigned long lastSensorCheck = 0;
 float lastSentTDS = -999.0;
 float lastSentTemp = -999.0;
 float lastSentHumidity = -999.0;
+float lastSentMedia = -999.0;
 unsigned long lastDhtRead = 0;
 
-// Buffer TDS non-blocking: 30 sampel x 40 ms = jendela pengukuran sekitar 1,2 detik.
-// Sampling berkala jauh lebih stabil daripada membaca beruntun dalam beberapa ms.
-#define TDS_SAMPLE_COUNT 30
-uint32_t tdsMilliVoltBuffer[TDS_SAMPLE_COUNT];
-int tdsSampleIndex = 0;
-int tdsSamplesAvailable = 0;
-unsigned long lastTdsSample = 0;
 float filteredTdsVoltage = 0.0;
+float smoothedTDS = 0.0;
+float filteredSoilVoltage = 0.0;
 
 // DHT22 tidak boleh dibaca lebih cepat dari sekitar 2 detik. Pemanggilan di antara
 // interval tersebut mengembalikan nilai valid terakhir.
@@ -293,9 +306,6 @@ float readTempSensor() {
   }
 
   measuredTemp += DEFAULT_TEMP_CALIBRATION_OFFSET;
-  // Tolak data ber-checksum valid tetapi tidak masuk akal untuk lingkungan kebun.
-  // Kondisi ini biasanya disebabkan tipe sensor salah, kabel DATA tanpa pull-up,
-  // kabel terlalu panjang, atau suplai sensor yang tidak stabil.
   if (measuredTemp < -10.0 || measuredTemp > 60.0) {
     Serial.printf("[DHT22] Nilai tidak wajar ditolak: %.1f °C. Periksa wiring/pull-up DATA.\n", measuredTemp);
     return sensorTemp;
@@ -307,18 +317,6 @@ float readTempSensor() {
     sensorHumidityValid = true;
   }
   return measuredTemp;
-}
-
-// Ambil tepat satu sampel agar loop WebSocket/BLE tidak terblokir.
-void updateTdsSampling() {
-  unsigned long now = millis();
-  if (lastTdsSample != 0 && now - lastTdsSample < 40) return;
-  lastTdsSample = now;
-
-  // Gunakan kalibrasi ADC bawaan chip, bukan asumsi linear 0-4095 = 0-3,3 V.
-  tdsMilliVoltBuffer[tdsSampleIndex] = analogReadMilliVolts(SENSOR_TDS_PIN);
-  tdsSampleIndex = (tdsSampleIndex + 1) % TDS_SAMPLE_COUNT;
-  if (tdsSamplesAvailable < TDS_SAMPLE_COUNT) tdsSamplesAvailable++;
 }
 
 // Fungsi simpan faktor kalibrasi TDS ke Flash Memory (NVS)
@@ -336,18 +334,41 @@ void saveTdsCalibrationFactor(float factor) {
   Serial.printf("=======================================================\n\n");
 }
 
-// Fungsi reset kalibrasi TDS ke default (1.0)
-void resetTdsCalibration() {
-  tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
+// Fungsi simpan baseline tegangan udara kering ke Flash Memory (NVS)
+void saveTdsAirBaseline(float baselineVoltage) {
+  if (baselineVoltage < 0.5 || baselineVoltage > 3.3) {
+    Serial.println("[TDS] Baseline udara tidak valid (harus antara 0.5V s.d 3.3V)");
+    return;
+  }
+  tds_air_baseline = baselineVoltage;
   preferences.begin("fertigation", false);
-  preferences.remove("tds_factor");
+  preferences.putFloat("tds_base", tds_air_baseline);
   preferences.end();
-  Serial.println("[TDS] Faktor kalibrasi dikembalikan ke default (1.0000).");
+  Serial.printf("\n=======================================================\n");
+  Serial.printf("[TDS] BERHASIL! Baseline Udara Tersimpan: %.3f V (%.1f mV)\n", tds_air_baseline, tds_air_baseline * 1000.0);
+  Serial.printf("=======================================================\n\n");
 }
 
-// Batas tegangan baseline udara kering (open-circuit) untuk modul TDS Meter V1.0
-// Saat di udara kering, output modul berada di ~2.42V. Nilai di atas 2.36V otomatis dianggap 0 PPM (di udara)
-#define TDS_AIR_BASELINE_VOLTAGE 2.42
+// Fungsi reset kalibrasi TDS ke default (1.0) dan baseline default (2.42V)
+void resetTdsCalibration() {
+  tds_calibration_factor = DEFAULT_TDS_CALIBRATION_FACTOR;
+  tds_air_baseline = DEFAULT_TDS_AIR_BASELINE;
+  preferences.begin("fertigation", false);
+  preferences.remove("tds_factor");
+  preferences.remove("tds_base");
+  preferences.end();
+  Serial.println("[TDS] Faktor kalibrasi & baseline dikembalikan ke default.");
+}
+
+// 1-Click Kalibrasi Otomatis Baseline Udara Kering (Angkat probe di udara kering)
+bool calibrateTdsAir() {
+  if (filteredTdsVoltage < 0.5) {
+    Serial.println("[TDS] Gagal: Tegangan terbaca terlalu rendah (<0.5V). Pastikan modul TDS terhubung!");
+    return false;
+  }
+  saveTdsAirBaseline(filteredTdsVoltage);
+  return true;
+}
 
 // Fungsi 1-Click Kalibrasi Otomatis TDS Menggunakan Larutan Standar (misal 1382 PPM / 1000 PPM)
 bool calibrateTdsWithStandard(float standardPpm) {
@@ -355,20 +376,14 @@ bool calibrateTdsWithStandard(float standardPpm) {
     Serial.println("[TDS] Gagal: Nilai standar PPM harus lebih besar dari 0!");
     return false;
   }
-  if (filteredTdsVoltage >= (TDS_AIR_BASELINE_VOLTAGE - 0.06)) {
-    Serial.println("[TDS] Gagal: Probe terdeteksi masih di udara kering (tegangan baseline). Celupkan probe ke larutan!");
-    return false;
-  }
-
-  float activeVoltage = TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage;
-  if (activeVoltage <= 0.02) {
-    Serial.println("[TDS] Gagal: Penurunan tegangan terlalu kecil. Pastikan probe terendam di larutan!");
+  if (filteredTdsVoltage < 0.05) {
+    Serial.println("[TDS] Gagal: Tegangan sensor terlalu rendah (<50 mV). Pastikan probe terendam di larutan!");
     return false;
   }
 
   float tempCoeff = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
-  float compVolt = activeVoltage / tempCoeff;
-  float uncalibratedPpm = compVolt * 215.0;
+  float compVolt = filteredTdsVoltage / tempCoeff;
+  float uncalibratedPpm = (133.42 * pow(compVolt, 3) - 255.86 * pow(compVolt, 2) + 857.39 * compVolt) * 0.5;
 
   if (uncalibratedPpm <= 5.0) {
     Serial.println("[TDS] Gagal: Pembacaan sensor terlalu kecil untuk larutan standar.");
@@ -380,61 +395,124 @@ bool calibrateTdsWithStandard(float standardPpm) {
   return true;
 }
 
-// Hitung TDS dari buffer tersaring (Pin A - GPIO 32).
+// Fungsi Membaca Nilai TDS Aktual Stabil & Anti-Jomplang (PPM) dari Sensor TDS Meter V1.0 (Pin A - GPIO 32)
+// Menggunakan Kalibrasi eFuse ADC ESP32 + 40-Point Median + Dual-Stage EMA + Deadband Hysteresis
 float readTDSSensor() {
-  // Tunggu inisialisasi cukup sampel sebelum mengganti nilai terakhir.
-  if (tdsSamplesAvailable < 5) return sensorTDS;
+  const int samples = 40;
+  uint32_t analogBuffer[40];
 
-  uint32_t sortedBuffer[TDS_SAMPLE_COUNT];
-  int samples = tdsSamplesAvailable;
-  for (int i = 0; i < samples; i++) sortedBuffer[i] = tdsMilliVoltBuffer[i];
+  // Ambil 40 sampel dengan interval 300 µs (mencakup 12 siklus gelombang AC penuh modul TDS)
+  for (int i = 0; i < samples; i++) {
+    analogBuffer[i] = analogReadMilliVolts(SENSOR_TDS_PIN);
+    delayMicroseconds(300);
+  }
 
-  // Median filtering untuk menghilangkan noise spike ADC
+  // Median filtering: Urutkan buffer dari terendah ke tertinggi
   for (int i = 0; i < samples - 1; i++) {
     for (int j = i + 1; j < samples; j++) {
-      if (sortedBuffer[i] > sortedBuffer[j]) {
-        uint32_t temp = sortedBuffer[i];
-        sortedBuffer[i] = sortedBuffer[j];
-        sortedBuffer[j] = temp;
+      if (analogBuffer[i] > analogBuffer[j]) {
+        uint32_t temp = analogBuffer[i];
+        analogBuffer[i] = analogBuffer[j];
+        analogBuffer[j] = temp;
       }
     }
   }
 
-  // Buang sekitar 20% nilai terendah dan tertinggi (trimmed mean)
-  int trim = samples / 5;
-  if (trim < 1) trim = 0;
+  // Trimmed Mean: Buang 10 sampel terendah dan 10 tertinggi (ambil 20 sampel tengah paling konsisten)
   uint32_t milliVoltSum = 0;
-  int count = 0;
-  for (int i = trim; i < samples - trim; i++) {
-    milliVoltSum += sortedBuffer[i];
-    count++;
+  const int trimCount = 10;
+  for (int i = trimCount; i < samples - trimCount; i++) {
+    milliVoltSum += analogBuffer[i];
   }
-  float measuredVoltage = (count > 0) ? (((float)milliVoltSum / (float)count) / 1000.0) : 0.0;
+  float measuredMilliVolts = (float)milliVoltSum / (float)(samples - 2 * trimCount);
+  float voltage = measuredMilliVolts / 1000.0; // Konversi ke Volt
 
-  // Exponential moving average (EMA) smoothing untuk stabilitas
-  if (filteredTdsVoltage <= 0.0) filteredTdsVoltage = measuredVoltage;
-  else filteredTdsVoltage = (filteredTdsVoltage * 0.80) + (measuredVoltage * 0.20);
-
-  // Jika probe berada di udara (tegangan mendekati baseline udara ~2.42V atau kabel terlepas < 0.05V) -> 0 PPM
-  if (filteredTdsVoltage >= (TDS_AIR_BASELINE_VOLTAGE - 0.06) || filteredTdsVoltage < 0.05) {
-    return 0.0;
+  // Stage 1: Exponential Moving Average (EMA) pada Voltase (80% nilai lama + 20% nilai baru)
+  if (filteredTdsVoltage <= 0.0) {
+    filteredTdsVoltage = voltage;
+  } else {
+    filteredTdsVoltage = (filteredTdsVoltage * 0.80) + (voltage * 0.20);
   }
 
-  // Hitung tegangan aktif konduktivitas (penurunan tegangan dari baseline udara)
-  float activeVoltage = TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage;
-  if (activeVoltage < 0.0) activeVoltage = 0.0;
+  // Kompensasi suhu larutan: fComp = 1.0 + 0.02 * (T - 25.0)
+  float compensationCoefficient = 1.0 + 0.02 * (WATER_TEMP_ESTIMATE - 25.0);
+  float compensationVoltage = filteredTdsVoltage / compensationCoefficient;
 
-  // Kompensasi suhu air standar 25°C
-  float currentWaterTemp = WATER_TEMP_ESTIMATE;
-  float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
-  float compensationVoltage = activeVoltage / compensationCoefficient;
-
-  // Kalkulasi TDS proporsional terkalibrasi:
-  // Baseline air biasa (~1.859V drop 0.56V) menghasilkan ~120 PPM
-  float calculatedTDS = (compensationVoltage * 215.0) * tds_calibration_factor;
+  // Rumus Kurva Karakteristik Non-Linear TDS Gravity / TDS Meter V1.0:
+  // TDS (ppm) = (133.42 * V^3 - 255.86 * V^2 + 857.39 * V) * 0.5 * factor
+  float calculatedTDS = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5 * tds_calibration_factor;
 
   if (calculatedTDS < 0.0) calculatedTDS = 0.0;
-  return calculatedTDS;
+
+  // Stage 2: Hysteresis / Deadband & Output Smoothing
+  // Mencegah nilai melompat-lompat akibat ripple listrik kecil
+  if (smoothedTDS <= 0.0) {
+    smoothedTDS = calculatedTDS;
+  } else {
+    // Jika perubahan TDS nyata (> 12 PPM), ikuti perubahannya secara mulus
+    // Jika perubahan hanya noise kecil (<= 12 PPM), kunci di nilai stabil agar tidak bergetar
+    if (fabs(calculatedTDS - smoothedTDS) > 12.0) {
+      smoothedTDS = (smoothedTDS * 0.75) + (calculatedTDS * 0.25);
+    }
+  }
+
+  return round(smoothedTDS);
+}
+
+// Fungsi Membaca Kelembapan Media Tanam / Tanah (Soil Moisture Hygrometer Sensor)
+// Pin AO (GPIO 34 - ADC1): Membaca persentase kelembapan (0% kering s.d 100% basah)
+// Pin DO (GPIO 35 - Digital In): Membaca ambang batas trimpot (LOW = Basah / Cukup, HIGH = Kering / Perlu Siram)
+float readSoilMoistureSensor() {
+  const int samples = 25;
+  uint32_t analogBuffer[25];
+
+  for (int i = 0; i < samples; i++) {
+    analogBuffer[i] = analogReadMilliVolts(SENSOR_SOIL_AO_PIN);
+    delayMicroseconds(200);
+  }
+
+  // Median filtering
+  for (int i = 0; i < samples - 1; i++) {
+    for (int j = i + 1; j < samples; j++) {
+      if (analogBuffer[i] > analogBuffer[j]) {
+        uint32_t temp = analogBuffer[i];
+        analogBuffer[i] = analogBuffer[j];
+        analogBuffer[j] = temp;
+      }
+    }
+  }
+
+  // Trimmed mean (buang 5 terendah & 5 tertinggi)
+  uint32_t milliVoltSum = 0;
+  const int trimCount = 5;
+  for (int i = trimCount; i < samples - trimCount; i++) {
+    milliVoltSum += analogBuffer[i];
+  }
+  float measuredMilliVolts = (float)milliVoltSum / (float)(samples - 2 * trimCount);
+  float voltage = measuredMilliVolts / 1000.0; // Volt
+
+  // Exponential moving average smoothing
+  if (filteredSoilVoltage <= 0.0) {
+    filteredSoilVoltage = voltage;
+  } else {
+    filteredSoilVoltage = (filteredSoilVoltage * 0.80) + (voltage * 0.20);
+  }
+
+  // Baca status digital pin DO (Active-Low pada modul LM393 Soil Moisture)
+  // LOW (0) = Sensor mendeteksi tanah basah (melampaui threshold trimpot)
+  // HIGH (1) = Tanah kering (di bawah threshold)
+  int doState = digitalRead(SENSOR_SOIL_DO_PIN);
+  sensorMediaDO = (doState == HIGH); // true = KERING, false = BASAH
+
+  // Konversi voltase analog AO ke persentase 0 - 100%:
+  // DEFAULT_SOIL_DRY_VOLTAGE (2.80V) -> 0% (Kering)
+  // DEFAULT_SOIL_WET_VOLTAGE (1.00V) -> 100% (Basah jenuh)
+  float percentage = ((DEFAULT_SOIL_DRY_VOLTAGE - filteredSoilVoltage) / (DEFAULT_SOIL_DRY_VOLTAGE - DEFAULT_SOIL_WET_VOLTAGE)) * 100.0;
+  if (percentage < 0.0) percentage = 0.0;
+  if (percentage > 100.0) percentage = 100.0;
+
+  sensorMediaValid = true;
+  return percentage;
 }
 
 void tickLED() {
@@ -686,9 +764,10 @@ void sendBleStatus() {
   valves["valve1"] = valve1State;
   valves["valve2"] = valve2State;
 
-  // Satu DHT22 di GPIO 33 menghasilkan suhu dan kelembapan udara.
+  // Baca sensor fisik
   sensorTemp = readTempSensor();
   sensorTDS = readTDSSensor();
+  sensorMedia = readSoilMoistureSensor();
   sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
 
   JsonObject sensors = doc.createNestedObject("sensors");
@@ -698,6 +777,9 @@ void sendBleStatus() {
   else sensors["suhu"] = nullptr;
   if (sensorHumidityValid) sensors["kelembaban"] = sensorHumidity;
   else sensors["kelembaban"] = nullptr;
+  if (sensorMediaValid) sensors["media"] = sensorMedia;
+  else sensors["media"] = nullptr;
+  sensors["media_do"] = sensorMediaDO ? "KERING" : "BASAH";
 
   String output;
   serializeJson(doc, output);
@@ -1052,7 +1134,37 @@ class MyBleRxCallbacks: public BLECharacteristicCallbacks {
           res["type"] = "TDS_CALIBRATE_RESULT";
           res["success"] = true;
           res["factor"] = tds_calibration_factor;
+          res["baseline"] = tds_air_baseline;
           res["message"] = "Faktor kalibrasi TDS direset ke 1.0000.";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
+        }
+        // 16. CALIBRATE_AIR: Auto-zero baseline udara kering
+        else if (cmd == "CALIBRATE_AIR") {
+          bool success = calibrateTdsAir();
+
+          StaticJsonDocument<256> res;
+          res["type"] = "TDS_AIR_CALIBRATE_RESULT";
+          res["success"] = success;
+          res["baseline"] = tds_air_baseline;
+          res["message"] = success ? "Baseline udara berhasil disimpan ke Flash!" : "Gagal kalibrasi udara kering.";
+          String resStr;
+          serializeJson(res, resStr);
+          sendBleNotify(resStr);
+          sendBleStatus();
+        }
+        // 17. SET_TDS_BASELINE: Atur tegangan baseline udara manual
+        else if (cmd == "SET_TDS_BASELINE") {
+          float baseV = doc["baseline"] | DEFAULT_TDS_AIR_BASELINE;
+          saveTdsAirBaseline(baseV);
+
+          StaticJsonDocument<256> res;
+          res["type"] = "TDS_AIR_CALIBRATE_RESULT";
+          res["success"] = true;
+          res["baseline"] = tds_air_baseline;
+          res["message"] = "Baseline udara TDS berhasil diperbarui!";
           String resStr;
           serializeJson(res, resStr);
           sendBleNotify(resStr);
@@ -1152,8 +1264,9 @@ void sendWsTelemetry() {
   lastSentTDS = sensorTDS;
   lastSentTemp = sensorTemp;
   lastSentHumidity = sensorHumidity;
+  lastSentMedia = sensorMedia;
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   doc["type"] = "TELEMETRY";
   doc["device_code"] = device_code;
   doc["auth_code"] = auth_code;
@@ -1163,16 +1276,16 @@ void sendWsTelemetry() {
   else doc["suhu"] = nullptr;
   if (sensorHumidityValid) doc["kelembaban"] = sensorHumidity;
   else doc["kelembaban"] = nullptr;
+  if (sensorMediaValid) doc["media"] = sensorMedia;
+  else doc["media"] = nullptr;
+  doc["media_do"] = sensorMediaDO ? "KERING" : "BASAH";
   doc["status"] = "Normal";
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
-  if (sensorTempValid) {
-    Serial.printf("[WS Telemetry] Suhu: %.1f °C | Kelembapan: %.1f %% | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTemp, sensorHumidity, sensorTDS, filteredTdsVoltage, sensorEC);
-  } else {
-    Serial.printf("[WS Telemetry] DHT22 belum valid | TDS: %.0f ppm | Tegangan TDS: %.3f V (GPIO 32) | EC: %.2f mS/cm\n", sensorTDS, filteredTdsVoltage, sensorEC);
-  }
+  Serial.printf("[WS Telemetry] Suhu: %.1f °C | Udara: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
+                sensorTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
 }
 
 // Send Command Completed confirmation
@@ -1333,11 +1446,14 @@ void setup() {
   Serial.println("=======================================================");
 
   pinMode(SENSOR_TDS_PIN, INPUT);
+  pinMode(SENSOR_SOIL_AO_PIN, INPUT);
+  pinMode(SENSOR_SOIL_DO_PIN, INPUT);
   dht.begin();
 
   analogReadResolution(12);       // Resolusi ADC 12-bit (0-4095)
   analogSetAttenuation(ADC_11db); // Rentang tegangan input 0 - 3.3V
   analogSetPinAttenuation(SENSOR_TDS_PIN, ADC_11db);
+  analogSetPinAttenuation(SENSOR_SOIL_AO_PIN, ADC_11db);
 
   // 1. Baca konfigurasi dari flash memory (NVS)
   preferences.begin("fertigation", false);
@@ -1345,6 +1461,10 @@ void setup() {
   ws_host_str = preferences.getString("ws_host", DEFAULT_WS_HOST);
   ws_port = preferences.getUShort("ws_port", DEFAULT_WS_PORT);
   tds_calibration_factor = preferences.getFloat("tds_factor", DEFAULT_TDS_CALIBRATION_FACTOR);
+  tds_air_baseline = preferences.getFloat("tds_base", DEFAULT_TDS_AIR_BASELINE);
+  if (tds_air_baseline < 0.5 || tds_air_baseline > 3.3) {
+    tds_air_baseline = DEFAULT_TDS_AIR_BASELINE;
+  }
 
   // Jika NVS masih kosong, gunakan default
   if (ws_host_str == "") {
@@ -1355,7 +1475,7 @@ void setup() {
   }
   preferences.end();
   Serial.printf("[API] URL API Aktif: %s:%d\n", ws_host_str.c_str(), ws_port);
-  Serial.printf("[TDS] Faktor Kalibrasi Aktif: %.4f\n", tds_calibration_factor);
+  Serial.printf("[TDS] Faktor Kalibrasi Aktif: %.4f | Baseline Udara: %.3f V\n", tds_calibration_factor, tds_air_baseline);
 
   if (auth_code.length() > 0) {
     is_authenticated = true;
@@ -1408,9 +1528,6 @@ void loop() {
     webSocket.loop();
   }
 
-  // Sampling analog TDS berjalan kontinu dan tidak bergantung pada refresh BLE.
-  updateTdsSampling();
-
   unsigned long now = millis();
 
   // Re-start BLE Advertising if disconnected
@@ -1436,6 +1553,11 @@ void loop() {
       resetAuthCode();
     } else if (cmd == "STATUS" || cmd == "status") {
       sendBleStatus();
+    } else if (cmd == "CAL_AIR" || cmd == "cal_air") {
+      calibrateTdsAir();
+    } else if (cmd.startsWith("SET_TDS_BASELINE ") || cmd.startsWith("set_tds_baseline ")) {
+      float baseV = cmd.substring(17).toFloat();
+      saveTdsAirBaseline(baseV);
     } else if (cmd.startsWith("CAL_TDS ") || cmd.startsWith("cal_tds ")) {
       float stdPpm = cmd.substring(8).toFloat();
       calibrateTdsWithStandard(stdPpm);
@@ -1444,10 +1566,9 @@ void loop() {
       saveTdsCalibrationFactor(f);
     } else if (cmd == "RESET_TDS_CAL" || cmd == "reset_tds_cal") {
       resetTdsCalibration();
-    } else if (cmd == "RAW_TDS" || cmd == "raw_tds") {
-      float actV = (TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage > 0) ? (TDS_AIR_BASELINE_VOLTAGE - filteredTdsVoltage) : 0.0;
-      Serial.printf("[TDS Debug] Voltase ADC: %.3f V (%.1f mV) | V_Aktif (Drop): %.3f V | Faktor Kalibrasi: %.4f | TDS: %.1f PPM | EC: %.2f mS/cm\n",
-                    filteredTdsVoltage, filteredTdsVoltage * 1000.0, actV, tds_calibration_factor, sensorTDS, sensorEC);
+    } else if (cmd == "RAW_SOIL" || cmd == "raw_soil") {
+      Serial.printf("[SOIL Debug] Voltase AO: %.3f V (%.1f mV) | Kelembapan Media: %.1f %% | Pin DO (Digital): %s\n",
+                    filteredSoilVoltage, filteredSoilVoltage * 1000.0, sensorMedia, sensorMediaDO ? "KERING (HIGH)" : "BASAH (LOW)");
     }
   }
 
@@ -1475,17 +1596,20 @@ void loop() {
     // TDS memakai sensorTemp untuk kompensasi; perbarui lebih dahulu.
     sensorTemp = curTemp;
     float curTDS = readTDSSensor();
+    float curMedia = readSoilMoistureSensor();
 
-    // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / suhu berubah)
+    // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / tanah disiram / suhu berubah)
     bool significantChange = (fabs(curTDS - lastSentTDS) >= 25.0)
       || (fabs(curTemp - lastSentTemp) >= 0.8)
-      || (sensorHumidityValid && fabs(sensorHumidity - lastSentHumidity) >= 2.0);
+      || (sensorHumidityValid && fabs(sensorHumidity - lastSentHumidity) >= 2.0)
+      || (sensorMediaValid && fabs(curMedia - lastSentMedia) >= 2.5);
 
     // Kirim WebSocket jika ada perubahan nyata (instan) ATAU interval periodik 3.0 detik
     if (significantChange || (now - lastTelemetry >= 3000) || (lastTelemetry == 0)) {
       lastTelemetry = now;
       sensorTDS = curTDS;
       sensorTemp = curTemp;
+      sensorMedia = curMedia;
       sensorEC = sensorTDS / 500.0;
 
       if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
