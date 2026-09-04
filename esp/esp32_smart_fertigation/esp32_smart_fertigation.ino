@@ -581,8 +581,8 @@ void connectWebSocketServer() {
     }
 
     webSocket.onEvent(webSocketEvent);
-    webSocket.setReconnectInterval(3000);
-    webSocket.enableHeartbeat(4000, 1500, 2);
+    webSocket.setReconnectInterval(2500);
+    webSocket.enableHeartbeat(20000, 8000, 3);
   }
 }
 
@@ -1435,8 +1435,8 @@ void loop() {
     }
   }
 
-  // Kirim Heartbeat WebSocket setiap 4 detik jika terhubung
-  if (now - lastHeartbeat >= 4000 || lastHeartbeat == 0) {
+  // Kirim Heartbeat WebSocket setiap 3 detik jika terhubung (Menjaga socket tetap aktif)
+  if (now - lastHeartbeat >= 3000 || lastHeartbeat == 0) {
     lastHeartbeat = now;
     if (WiFi.status() == WL_CONNECTED && webSocket.isConnected()) {
       sendWsHeartbeat();

@@ -131,7 +131,7 @@ export function initWebSocketServer(server) {
             });
         }
     });
-    // Start ping heartbeat interval to catch dead sockets immediately (within 3.5s)
+    // Start ping heartbeat interval to maintain active connections (25s interval)
     if (!pingIntervalStarted) {
         pingIntervalStarted = true;
         setInterval(() => {
@@ -162,7 +162,7 @@ export function initWebSocketServer(server) {
                 }
                 catch (_) { }
             }
-        }, 3500);
+        }, 25000);
     }
     if (!fertigationSchedulerStarted) {
         fertigationSchedulerStarted = true;
