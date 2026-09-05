@@ -8,6 +8,7 @@ import { ProductKatalogSection } from './ProductKatalogSection';
 import { SdgSection } from './SdgSection';
 import { FarmerSidoMaju } from './FarmerSidoMaju';
 import { Footer } from './Footer';
+import { FloatingCreatorBadge } from './FloatingCreatorBadge';
 import { useLenisScroll } from '../hooks/useGsap';
 
 export const App = () => {
@@ -27,6 +28,7 @@ export const App = () => {
         <FarmerSidoMaju />
       </main>
       <Footer />
+      <FloatingCreatorBadge />
     </div>
   );
 };

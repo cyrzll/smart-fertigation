@@ -3,6 +3,7 @@ import { gsap } from '../hooks/useGsap';
 import { ShoppingBag, Search, Filter, Flame, ArrowLeft, CheckCircle2, MessageCircle, X, Sparkles } from 'lucide-react';
 import { Navbar } from './Navbar';
 import { Footer } from './Footer';
+import { FloatingCreatorBadge } from './FloatingCreatorBadge';
 
 export const ProdukFullPage = () => {
   const [products, setProducts] = useState([]);
@@ -273,6 +274,7 @@ export const ProdukFullPage = () => {
       )}
 
       <Footer />
+      <FloatingCreatorBadge />
     </div>
   );
 };
