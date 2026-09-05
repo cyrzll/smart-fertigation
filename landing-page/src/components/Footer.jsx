@@ -131,7 +131,7 @@ export const Footer = () => {
         <div className="pt-8 text-center text-xs text-[#2E4F34]/70 font-medium flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>&copy; 2026 PPK Ormawa Biro Teknik Informatika. All rights reserved.</p>
           <p>
-            <span>Dikembangkan Bersama MELO Mascot</span>
+            
           </p>
         </div>
       </div>

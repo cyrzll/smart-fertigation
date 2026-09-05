@@ -49,3 +49,12 @@ html.lenis, html.lenis body {
 ::-webkit-scrollbar-thumb:hover {
   background: #16381E;
 }
+
+@keyframes progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
