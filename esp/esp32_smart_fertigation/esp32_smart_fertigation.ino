@@ -50,7 +50,7 @@
 // =================================================================================
 // Firmware Version & WebSocket Configuration
 // =================================================================================
-const char* firmware_version = "v2.8.0-DS18B20-Water-Temp";
+const char* firmware_version = "v2.9.0-Climate-Protection";
 
 // Default API URL (bisa diubah via BLE dan disimpan permanen di NVS)
 #define DEFAULT_WS_HOST "api.tirtaruna.site"
@@ -110,8 +110,9 @@ String auth_code = "";
 bool is_authenticated = false;
 
 // Pin Configurations
-#define VALVE1_PIN 25       // Relay Valve 1 (Zona A) - GPIO 25
-#define VALVE2_PIN 26       // Relay Valve 2 (Zona B) - GPIO 26
+#define VALVE1_PIN 25       // Relay Valve 1 (Nutrisi) - GPIO 25
+#define VALVE2_PIN 26       // Relay Sprayer Pendingin Suhu Tinggi - GPIO 26
+#define VALVE3_PIN 27       // Relay Blower Sirkulasi Udara Suhu Rendah - GPIO 27
 #define ONBOARD_LED 2       // Onboard Blue LED - GPIO 2
 #define CONFIRM_LED_PIN 4   // External LED Konfirmasi - GPIO 4
 
@@ -215,11 +216,21 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastTelemetry = 0;
 unsigned long lastBleStatusUpdate = 0;
 
-// Valve States
-bool valve1State = false;
-bool valve2State = false;
+// Valve & Actuator States
+bool valve1State = false; // Valve 1 (Nutrisi)
+bool valve2State = false; // Sprayer (Pendingin Ruangan - GPIO 26)
+bool valve3State = false; // Blower (Sirkulasi Dingin - GPIO 27)
 unsigned long valve1AutoCloseTime = 0;
 unsigned long valve2AutoCloseTime = 0;
+unsigned long valve3AutoCloseTime = 0;
+
+// Climate & Soil Auto-Protection State (Matrix Warning)
+String currentWarningLevel = "NORMAL";       // "NORMAL", "WARNING_YELLOW", "CRITICAL_RED"
+String currentWarningType = "NORMAL";         // "NORMAL", "HEAT_CRITICAL", "HEAT_DRY_WARNING", "COLD_CRITICAL", "COLD_WET_WARNING"
+String currentWarningMsg = "Iklim Normal";
+unsigned long lastSprayerAutoTrigger = 0;
+unsigned long lastBlowerAutoTrigger = 0;
+const unsigned long ACTUATOR_AUTO_COOLDOWN = 60000; // Cooldown 60 detik per auto-trigger untuk mencegah relay cycling
 
 // Dynamic Valve Timers Structure (Mendukung GPIO 25, 26, 27, dan pin kustom apapun)
 struct DynamicValveTimer {
@@ -237,10 +248,11 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
   if (open) {
     digitalWrite(gpio, RELAY_OPEN_STATE);
     digitalWrite(ONBOARD_LED, LED_ON_STATE);
-    Serial.printf("[Valve] GPIO %d TERBUKA (Relay HIGH, Durasi: %ds)\n", gpio, durationSeconds);
+    Serial.printf("[Actuator/Valve] GPIO %d TERBUKA/AKTIF (Relay AKTIF, Durasi: %ds)\n", gpio, durationSeconds);
 
     if (gpio == VALVE1_PIN) valve1State = true;
     if (gpio == VALVE2_PIN) valve2State = true;
+    if (gpio == VALVE3_PIN) valve3State = true;
 
     if (durationSeconds > 0) {
       unsigned long timerEnd = millis() + ((unsigned long)durationSeconds * 1000);
@@ -255,10 +267,11 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
     }
   } else {
     digitalWrite(gpio, RELAY_CLOSE_STATE);
-    Serial.printf("[Valve] GPIO %d TERTUTUP (Relay LOW)\n", gpio);
+    Serial.printf("[Actuator/Valve] GPIO %d TERTUTUP/STANDBY (Relay STANDBY)\n", gpio);
 
     if (gpio == VALVE1_PIN) valve1State = false;
     if (gpio == VALVE2_PIN) valve2State = false;
+    if (gpio == VALVE3_PIN) valve3State = false;
 
     // Matikan timer aktif jika ada untuk GPIO ini
     for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
@@ -267,7 +280,7 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
       }
     }
 
-    // Matikan LED jika tidak ada valve lain yang sedang terbuka
+    // Matikan LED jika tidak ada valve / aktuator lain yang sedang terbuka
     bool anyActive = false;
     for (int i = 0; i < MAX_VALVE_TIMERS; i++) {
       if (dynamicValves[i].active) {
@@ -275,7 +288,7 @@ void setValvePin(int gpio, bool open, int durationSeconds) {
         break;
       }
     }
-    if (!anyActive && !valve1State && !valve2State) {
+    if (!anyActive && !valve1State && !valve2State && !valve3State) {
       digitalWrite(ONBOARD_LED, LED_OFF_STATE);
     }
   }
@@ -551,6 +564,70 @@ float readSoilMoistureSensor() {
   return percentage;
 }
 
+// =================================================================================
+// Climate & Soil Auto-Protection Matrix Evaluator
+// =================================================================================
+// 1. Suhu > 40°C -> Warning Merah & Sprayer Otomatis ON (GPIO 26)
+// 2. Suhu 38-40°C & Tanah Kering -> Warning Kuning
+// 3. Suhu < 25°C -> Warning Merah & Blower Otomatis ON (GPIO 27)
+// 4. Suhu <= 25°C & Tanah Lembap -> Warning Kuning
+// 5. Suhu 25 - 38°C -> Normal / Optimal
+void processAutoClimateProtection() {
+  if (!sensorTempValid) return;
+
+  unsigned long now = millis();
+  float t = sensorTemp;
+  bool isDry = sensorMediaDO || (sensorMediaValid && sensorMedia < 40.0);
+  bool isWet = !sensorMediaDO || (sensorMediaValid && sensorMedia >= 50.0);
+
+  // 1. Suhu Ruangan Meningkat Kritis (> 40.0°C) -> Warning Merah & Sprayer Dinyalakan (GPIO 26)
+  if (t > 40.0) {
+    currentWarningLevel = "CRITICAL_RED";
+    currentWarningType = "HEAT_CRITICAL";
+    currentWarningMsg = "BAHAYA: Suhu Ruangan Ekstrem (>40°C)! Sprayer (GPIO 26) Otomatis Dinyalakan.";
+
+    // Otomatis nyalakan Sprayer 20 detik jika belum aktif & cooldown selesai
+    if (!valve2State && (now - lastSprayerAutoTrigger >= ACTUATOR_AUTO_COOLDOWN || lastSprayerAutoTrigger == 0)) {
+      lastSprayerAutoTrigger = now;
+      Serial.printf("\n🚨 [AUTO-PROTECT] SUHU PANAS %.1f°C > 40.0°C! MENYALAKAN SPRAYER (GPIO %d) SELAMA 20 DETIK...\n\n", t, VALVE2_PIN);
+      setValvePin(VALVE2_PIN, true, 20);
+      if (valve3State) setValvePin(VALVE3_PIN, false, 0); // Matikan Blower jika sempat aktif
+    }
+  }
+  // 2. Suhu Tinggi (>= 38.0°C s.d. 40.0°C) & Tanah Kering -> Warning Kuning
+  else if (t >= 38.0 && isDry) {
+    currentWarningLevel = "WARNING_YELLOW";
+    currentWarningType = "HEAT_DRY_WARNING";
+    currentWarningMsg = "WASPADA: Suhu Ruangan Tinggi & Kondisi Tanah KERING!";
+  }
+  // 3. Suhu Ruangan Menurun Kritis (< 25.0°C) -> Warning Merah & Blower Dinyalakan (GPIO 27)
+  else if (t < 25.0) {
+    currentWarningLevel = "CRITICAL_RED";
+    currentWarningType = "COLD_CRITICAL";
+    currentWarningMsg = "BAHAYA: Suhu Ruangan Terlalu Dingin (<25°C)! Blower (GPIO 27) Otomatis Dinyalakan.";
+
+    // Otomatis nyalakan Blower 30 detik jika belum aktif & cooldown selesai
+    if (!valve3State && (now - lastBlowerAutoTrigger >= ACTUATOR_AUTO_COOLDOWN || lastBlowerAutoTrigger == 0)) {
+      lastBlowerAutoTrigger = now;
+      Serial.printf("\n🚨 [AUTO-PROTECT] SUHU DINGIN %.1f°C < 25.0°C! MENYALAKAN BLOWER (GPIO %d) SELAMA 30 DETIK...\n\n", t, VALVE3_PIN);
+      setValvePin(VALVE3_PIN, true, 30);
+      if (valve2State) setValvePin(VALVE2_PIN, false, 0); // Matikan Sprayer jika sempat aktif
+    }
+  }
+  // 4. Suhu Rendah (<= 25.0°C) & Tanah Lembap -> Warning Kuning
+  else if (t <= 25.0 && isWet) {
+    currentWarningLevel = "WARNING_YELLOW";
+    currentWarningType = "COLD_WET_WARNING";
+    currentWarningMsg = "WASPADA: Suhu Ruangan Rendah (<=25°C) & Kondisi Tanah LEMBAP!";
+  }
+  // 5. Suhu Normal (25.0°C s.d. 38.0°C)
+  else {
+    currentWarningLevel = "NORMAL";
+    currentWarningType = "NORMAL";
+    currentWarningMsg = "Iklim Ruangan & Media Tanam Normal";
+  }
+}
+
 void tickLED() {
   digitalWrite(ONBOARD_LED, !digitalRead(ONBOARD_LED));
 }
@@ -798,7 +875,14 @@ void sendBleStatus() {
 
   JsonObject valves = doc.createNestedObject("valves");
   valves["valve1"] = valve1State;
-  valves["valve2"] = valve2State;
+  valves["valve2"] = valve2State; // Sprayer (GPIO 26)
+  valves["valve3"] = valve3State; // Blower (GPIO 27)
+  valves["sprayer"] = valve2State;
+  valves["blower"] = valve3State;
+
+  doc["warning_level"] = currentWarningLevel;
+  doc["warning_type"] = currentWarningType;
+  doc["warning_msg"] = currentWarningMsg;
 
   // Baca sensor fisik
   sensorTemp = readTempSensor();
@@ -806,6 +890,9 @@ void sendBleStatus() {
   sensorTDS = readTDSSensor();
   sensorMedia = readSoilMoistureSensor();
   sensorEC = sensorTDS / 500.0; // Perkiraan EC (mS/cm): 1 mS/cm ~ 500 ppm
+
+  // Evaluasi proteksi iklim & tanah otomatis
+  processAutoClimateProtection();
 
   JsonObject sensors = doc.createNestedObject("sensors");
   sensors["tds"] = sensorTDS;
@@ -1306,7 +1393,7 @@ void sendWsTelemetry() {
   lastSentHumidity = sensorHumidity;
   lastSentMedia = sensorMedia;
 
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<512> doc;
   doc["type"] = "TELEMETRY";
   doc["device_code"] = device_code;
   doc["auth_code"] = auth_code;
@@ -1321,17 +1408,29 @@ void sendWsTelemetry() {
   if (sensorMediaValid) doc["media"] = sensorMedia;
   else doc["media"] = nullptr;
   doc["media_do"] = sensorMediaDO ? "KERING" : "BASAH";
-  doc["status"] = "Normal";
+  doc["status"] = (currentWarningLevel == "CRITICAL_RED") ? "Kritis" : ((currentWarningLevel == "WARNING_YELLOW") ? "Waspada" : "Normal");
+
+  // Status Proteksi Iklim & Aktuator
+  doc["warning_level"] = currentWarningLevel;
+  doc["warning_type"] = currentWarningType;
+  doc["warning_msg"] = currentWarningMsg;
+
+  JsonObject valDoc = doc.createNestedObject("valves");
+  valDoc["valve1"] = valve1State;
+  valDoc["valve2"] = valve2State; // Sprayer (GPIO 26)
+  valDoc["valve3"] = valve3State; // Blower (GPIO 27)
+  valDoc["sprayer"] = valve2State;
+  valDoc["blower"] = valve3State;
 
   String msg;
   serializeJson(doc, msg);
   webSocket.sendTXT(msg);
   if (sensorWaterTempValid) {
-    Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: %.1f °C | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
-                  sensorTemp, sensorWaterTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+    Serial.printf("[WS Telemetry] Suhu: %.1f °C | Suhu Air: %.1f °C | Lembap: %.1f %% | Media: %.1f %% (%s) | TDS: %.0f ppm | Status: %s (%s)\n",
+                  sensorTemp, sensorWaterTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, currentWarningLevel.c_str(), currentWarningType.c_str());
   } else {
-    Serial.printf("[WS Telemetry] Suhu Udara: %.1f °C | Suhu Air: DISCONNECTED (-127°C / No Pull-up) | Kelembapan: %.1f %% | Media: %.1f %% (DO: %s) | TDS: %.0f ppm | EC: %.2f mS/cm\n",
-                  sensorTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, sensorEC);
+    Serial.printf("[WS Telemetry] Suhu: %.1f °C | Suhu Air: DISCONNECTED | Lembap: %.1f %% | Media: %.1f %% (%s) | TDS: %.0f ppm | Status: %s (%s)\n",
+                  sensorTemp, sensorHumidity, sensorMedia, sensorMediaDO ? "KERING" : "BASAH", sensorTDS, currentWarningLevel.c_str(), currentWarningType.c_str());
   }
 }
 
@@ -1472,8 +1571,10 @@ void setup() {
   // Dilakukan pada baris pertama sebelum delay agar tidak ada lonjakan (glitch) saat boot
   pinMode(VALVE1_PIN, OUTPUT);
   pinMode(VALVE2_PIN, OUTPUT);
+  pinMode(VALVE3_PIN, OUTPUT);
   digitalWrite(VALVE1_PIN, RELAY_CLOSE_STATE); // HIGH (Standby Relay OFF)
   digitalWrite(VALVE2_PIN, RELAY_CLOSE_STATE); // HIGH (Standby Relay OFF)
+  digitalWrite(VALVE3_PIN, RELAY_CLOSE_STATE); // HIGH (Standby Relay OFF)
 
   pinMode(ONBOARD_LED, OUTPUT);
   pinMode(CONFIRM_LED_PIN, OUTPUT);
@@ -1555,14 +1656,9 @@ void setup() {
   updateStatusIndicator();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[Wi-Fi] Terhubung ke %s! IP ESP32: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-    digitalWrite(ONBOARD_LED, HIGH);
-
-    // 4. Inisialisasi WebSocket Client jika Wi-Fi terhubung
-    connectWebSocketServer();
+    Serial.printf("[Wi-Fi] Berhasil terhubung ke %s | IP: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   } else {
-    WiFi.disconnect(); // Hentikan ongoing retry di background agar tidak memblokir scan Wi-Fi
-    Serial.println("[Wi-Fi] Belum terhubung ke Wi-Fi. Anda dapat menyambungkannya sekarang via Web Bluetooth!");
+    Serial.println("[Wi-Fi] Belum terhubung ke Wi-Fi. Standby BLE & WiFiManager.");
   }
 }
 
@@ -1570,17 +1666,17 @@ void setup() {
 // Main Loop
 // =================================================================================
 void loop() {
-  // Indikator selalu mengikuti status koneksi terkini.
-  updateStatusIndicator();
+  unsigned long now = millis();
 
-  // Jalankan loop WebSocket client jika Wi-Fi terhubung
+  // Layani client WebSocket jika Wi-Fi terhubung
   if (WiFi.status() == WL_CONNECTED) {
     webSocket.loop();
   }
 
-  unsigned long now = millis();
+  // Update Status LED Traffic Light (Merah/Kuning/Hijau)
+  updateStatusIndicator();
 
-  // Re-start BLE Advertising if disconnected
+  // Handle BLE Disconnection reconnect advertising
   if (!bleDeviceConnected && oldBleDeviceConnected) {
     delay(200); // give the bluetooth stack the chance to get things ready
     pBleServer->startAdvertising(); // restart advertising
@@ -1626,6 +1722,12 @@ void loop() {
                     directTemp, 
                     (directTemp != DEVICE_DISCONNECTED_C && directTemp >= -40.0 && directTemp <= 110.0 && directTemp != 85.0) ? "VALID (OK)" : "TIDAK TERHUBUNG (-127°C / Butuh Resistor Pull-up 4.7kΩ)",
                     SENSOR_DS18B20_PIN);
+    } else if (cmd == "TEST_SPRAYER" || cmd == "test_sprayer") {
+      Serial.printf("[Test] Mengaktifkan Sprayer (GPIO %d) selama 5 detik...\n", VALVE2_PIN);
+      setValvePin(VALVE2_PIN, true, 5);
+    } else if (cmd == "TEST_BLOWER" || cmd == "test_blower") {
+      Serial.printf("[Test] Mengaktifkan Blower (GPIO %d) selama 5 detik...\n", VALVE3_PIN);
+      setValvePin(VALVE3_PIN, true, 5);
     }
   }
 
@@ -1655,6 +1757,9 @@ void loop() {
     sensorWaterTemp = curWaterTemp;
     float curTDS = readTDSSensor();
     float curMedia = readSoilMoistureSensor();
+
+    // Evaluasi proteksi iklim & tanah secara real-time
+    processAutoClimateProtection();
 
     // Deteksi jika terjadi perubahan nilai nyata (probe dicelup / air diaduk / tanah disiram / suhu berubah)
     bool significantChange = (fabs(curTDS - lastSentTDS) >= 25.0)
@@ -1694,8 +1799,9 @@ void loop() {
 
       if (pin == VALVE1_PIN) valve1State = false;
       if (pin == VALVE2_PIN) valve2State = false;
+      if (pin == VALVE3_PIN) valve3State = false;
 
-      Serial.printf("[Valve] GPIO %d otomatis TERTUTUP (durasi timer selesai)\n", pin);
+      Serial.printf("[Actuator/Valve] GPIO %d otomatis TERTUTUP/OFF (durasi timer selesai)\n", pin);
 
       bool anyActive = false;
       for (int j = 0; j < MAX_VALVE_TIMERS; j++) {
@@ -1704,7 +1810,7 @@ void loop() {
           break;
         }
       }
-      if (!anyActive && !valve1State && !valve2State) {
+      if (!anyActive && !valve1State && !valve2State && !valve3State) {
         digitalWrite(ONBOARD_LED, LED_OFF_STATE);
       }
 

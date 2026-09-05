@@ -302,9 +302,39 @@ export function initWebSocketServer(server) {
                         telemetry: payload.type === 'TELEMETRY' ? payload : undefined,
                     });
                     if (payload.type === 'TELEMETRY') {
-                        const { suhu, suhu_air, kelembaban, media, media_do, level_air, ec, tds, status } = payload;
+                        const { suhu, suhu_air, kelembaban, media, media_do, level_air, ec, tds, status, warning_level, warning_type, warning_msg, valves } = payload;
                         const finalEc = ec != null ? Number(ec) : (tds != null ? Number(tds) / 500.0 : null);
                         const finalTds = tds != null ? Number(tds) : (ec != null ? Number(ec) * 500.0 : null);
+                        // Climate & Soil Auto-Protection Matrix Evaluation
+                        let calculatedWarningLevel = warning_level || 'NORMAL';
+                        let calculatedWarningType = warning_type || 'NORMAL';
+                        let calculatedWarningMsg = warning_msg || '';
+                        const suhuNum = suhu != null ? Number(suhu) : null;
+                        const mediaNum = media != null ? Number(media) : null;
+                        const isDry = media_do === 'KERING' || (mediaNum !== null && mediaNum < 40.0);
+                        const isWet = media_do === 'BASAH' || (mediaNum !== null && mediaNum >= 50.0);
+                        if (!warning_level && suhuNum !== null) {
+                            if (suhuNum > 40.0) {
+                                calculatedWarningLevel = 'CRITICAL_RED';
+                                calculatedWarningType = 'HEAT_CRITICAL';
+                                calculatedWarningMsg = `Suhu ruangan kritis (${suhuNum.toFixed(1)}°C > 40°C)! Sprayer (GPIO 26) otomatis dinyalakan.`;
+                            }
+                            else if (suhuNum >= 38.0 && isDry) {
+                                calculatedWarningLevel = 'WARNING_YELLOW';
+                                calculatedWarningType = 'HEAT_DRY_WARNING';
+                                calculatedWarningMsg = `Suhu ruangan tinggi (${suhuNum.toFixed(1)}°C) & kondisi tanah KERING! Waspada stres panas tanaman.`;
+                            }
+                            else if (suhuNum < 25.0) {
+                                calculatedWarningLevel = 'CRITICAL_RED';
+                                calculatedWarningType = 'COLD_CRITICAL';
+                                calculatedWarningMsg = `Suhu ruangan terlalu dingin (${suhuNum.toFixed(1)}°C < 25°C)! Blower (GPIO 27) otomatis dinyalakan.`;
+                            }
+                            else if (suhuNum <= 25.0 && isWet) {
+                                calculatedWarningLevel = 'WARNING_YELLOW';
+                                calculatedWarningType = 'COLD_WET_WARNING';
+                                calculatedWarningMsg = `Suhu ruangan rendah (${suhuNum.toFixed(1)}°C) & kondisi tanah LEMBAP! Waspada kelembapan berlebih.`;
+                            }
+                        }
                         const nowTime = Date.now();
                         const lastInsert = lastDbTelemetryInsert.get(deviceCode) || 0;
                         if (nowTime - lastInsert >= 10000) {
@@ -319,7 +349,7 @@ export function initWebSocketServer(server) {
                                     level_air != null ? Number(level_air) : null,
                                     finalEc != null ? Number(finalEc.toFixed(2)) : null,
                                     finalTds != null ? Number(finalTds.toFixed(0)) : null,
-                                    status || 'Normal',
+                                    status || (calculatedWarningLevel === 'CRITICAL_RED' ? 'Kritis' : (calculatedWarningLevel === 'WARNING_YELLOW' ? 'Waspada' : 'Normal')),
                                 ]);
                             }
                             catch (dbErr) {
@@ -339,7 +369,11 @@ export function initWebSocketServer(server) {
                                 level_air,
                                 ec: finalEc != null ? Number(finalEc.toFixed(2)) : null,
                                 tds: finalTds != null ? Number(finalTds.toFixed(0)) : null,
-                                status: status || 'Normal',
+                                status: status || (calculatedWarningLevel === 'CRITICAL_RED' ? 'Kritis' : (calculatedWarningLevel === 'WARNING_YELLOW' ? 'Waspada' : 'Normal')),
+                                warning_level: calculatedWarningLevel,
+                                warning_type: calculatedWarningType,
+                                warning_msg: calculatedWarningMsg,
+                                valves: valves || undefined,
                                 created_at: new Date().toISOString(),
                             },
                         });

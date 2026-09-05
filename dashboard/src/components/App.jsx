@@ -13,6 +13,7 @@ import { UsersView } from './UsersView';
 import { WaBotView } from './WaBotView';
 import { AdminCenterView } from './AdminCenterView';
 import { UserSettingsView } from './UserSettingsView';
+import { FloatingCreatorBadge } from './FloatingCreatorBadge';
 import { Cpu, Plus } from 'lucide-react';
 import { actions } from 'astro:actions';
 import { GoeyToaster } from 'goey-toast';
@@ -296,6 +297,7 @@ export const App = () => {
           ) : null}
         </main>
       </div>
+      <FloatingCreatorBadge />
       <GoeyToaster position="top-right" richColors />
     </div>
   );

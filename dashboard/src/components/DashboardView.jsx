@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Sprout, Calendar, Clock, Cpu, ArrowRight, RefreshCw, CheckCircle2, 
   Layers, Droplets, Activity, Thermometer, Wind, Gauge, ShieldCheck, 
-  AlertTriangle, Sparkles, TrendingUp, Wifi, WifiOff
+  AlertTriangle, Sparkles, TrendingUp, Wifi, WifiOff, Fan, Flame, Zap
 } from 'lucide-react';
 import { actions } from 'astro:actions';
 import {
@@ -443,6 +443,111 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
   const suhuStatus = getSuhuStatus(suhuVal);
   const suhuAirStatus = getSuhuAirStatus(suhuAirVal);
 
+  // Deteksi status aktif Sprayer (GPIO 26) dan Blower (GPIO 27) dari telemetry / WebSocket
+  const sprayerActive = Boolean(
+    currentTelemetry.valves?.valve2 || 
+    currentTelemetry.valves?.sprayer ||
+    currentTelemetry.sprayer_active ||
+    (currentTelemetry.valves && currentTelemetry.valves['26'])
+  );
+
+  const blowerActive = Boolean(
+    currentTelemetry.valves?.valve3 || 
+    currentTelemetry.valves?.blower ||
+    currentTelemetry.blower_active ||
+    (currentTelemetry.valves && currentTelemetry.valves['27'])
+  );
+
+  // Evaluasi Logika Proteksi Iklim & Matrix Peringatan Suhu & Tanah
+  const climateAlert = useMemo(() => {
+    const espLevel = currentTelemetry.warning_level;
+    const espType = currentTelemetry.warning_type;
+    const espMsg = currentTelemetry.warning_msg;
+
+    if (suhuVal === null) return null;
+
+    const isDry = mediaDO === 'KERING' || (mediaVal !== null && mediaVal < 40.0);
+    const isWet = mediaDO === 'BASAH' || (mediaVal !== null && mediaVal >= 50.0);
+
+    // 1. Suhu meningkat (> 40°C) -> Warning Merah & Sprayer Dinyalakan (GPIO 26)
+    if (suhuVal > 40.0 || (espLevel === 'CRITICAL_RED' && (espType === 'HEAT_CRITICAL' || suhuVal >= 38.0))) {
+      return {
+        level: 'RED',
+        type: 'HEAT_CRITICAL',
+        badge: 'BAHAYA: SUHU RUANGAN EKSTREM (> 40°C)',
+        title: 'Bahaya Suhu Kritis Panas — Sprayer Otomatis Aktif',
+        description: espMsg || `Suhu ruangan mencapai ${suhuVal.toFixed(1)}°C (melebihi batas aman 40°C). Sprayer pendingin (GPIO 26) otomatis DINYALAKAN untuk menurunkan suhu ruangan.`,
+        actuatorName: 'Sprayer Mist Cooling',
+        actuatorPin: 'GPIO 26',
+        actuatorState: sprayerActive ? 'SEDANG MENYALA (ON)' : 'OTOMATIS DIAKTIFKAN',
+        actuatorActive: true,
+        actionType: 'SPRAYER',
+        borderClass: 'border-red-500 bg-gradient-to-r from-red-500/10 via-rose-500/5 to-red-500/10 shadow-md shadow-red-500/5',
+        badgeClass: 'bg-red-600 text-white animate-pulse',
+        iconBg: 'bg-red-100 text-red-600 border border-red-200',
+      };
+    }
+
+    // 2. Suhu tinggi (>= 38°C s.d. 40°C) dan kondisi tanah kering -> Warning Kuning
+    if ((suhuVal >= 38.0 && isDry) || (espLevel === 'WARNING_YELLOW' && espType === 'HEAT_DRY_WARNING')) {
+      return {
+        level: 'YELLOW',
+        type: 'HEAT_DRY_WARNING',
+        badge: 'WASPADA: SUHU RUANGAN TINGGI & TANAH KERING',
+        title: 'Peringatan Stres Panas & Kekeringan Media Tanam',
+        description: espMsg || `Suhu ruangan tinggi (${suhuVal.toFixed(1)}°C) dan kondisi tanah KERING (${mediaVal !== null ? `${mediaVal.toFixed(0)}%` : 'DO Kering'}). Siaga pendinginan Sprayer dan penyiraman nutrisi.`,
+        actuatorName: 'Sprayer Pendingin',
+        actuatorPin: 'GPIO 26',
+        actuatorState: sprayerActive ? 'MENYALA' : 'SIAGA OTOMATIS (STANDBY)',
+        actuatorActive: sprayerActive,
+        actionType: 'SPRAYER',
+        borderClass: 'border-amber-400 bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-amber-500/10',
+        badgeClass: 'bg-amber-500 text-white',
+        iconBg: 'bg-amber-100 text-amber-700 border border-amber-200',
+      };
+    }
+
+    // 3. Suhu semakin menurun (< 25°C) -> Warning Merah & Blower Dinyalakan (GPIO 27)
+    if (suhuVal < 25.0 || (espLevel === 'CRITICAL_RED' && (espType === 'COLD_CRITICAL' || suhuVal <= 25.0))) {
+      return {
+        level: 'RED',
+        type: 'COLD_CRITICAL',
+        badge: 'BAHAYA: SUHU RUANGAN TERLALU DINGIN (< 25°C)',
+        title: 'Bahaya Suhu Kritis Dingin — Blower Otomatis Aktif',
+        description: espMsg || `Suhu ruangan turun ke ${suhuVal.toFixed(1)}°C (di bawah batas minimum 25°C). Blower sirkulasi udara (GPIO 27) otomatis DINYALAKAN untuk sirkulasi udara hangat.`,
+        actuatorName: 'Blower Sirkulasi Udara',
+        actuatorPin: 'GPIO 27',
+        actuatorState: blowerActive ? 'SEDANG MENYALA (ON)' : 'OTOMATIS DIAKTIFKAN',
+        actuatorActive: true,
+        actionType: 'BLOWER',
+        borderClass: 'border-blue-500 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-blue-500/10 shadow-md shadow-blue-500/5',
+        badgeClass: 'bg-blue-600 text-white animate-pulse',
+        iconBg: 'bg-blue-100 text-blue-600 border border-blue-200',
+      };
+    }
+
+    // 4. Suhu rendah (<= 25°C) dan kondisi tanah lembap -> Warning Kuning
+    if ((suhuVal <= 25.0 && isWet) || (espLevel === 'WARNING_YELLOW' && espType === 'COLD_WET_WARNING')) {
+      return {
+        level: 'YELLOW',
+        type: 'COLD_WET_WARNING',
+        badge: 'WASPADA: SUHU RENDAH & TANAH LEMBAP',
+        title: 'Peringatan Kelembapan Berlebih & Risiko Jamur Akar',
+        description: espMsg || `Suhu ruangan rendah (${suhuVal.toFixed(1)}°C) dan kondisi tanah LEMBAP (${mediaVal !== null ? `${mediaVal.toFixed(0)}%` : 'DO Basah'}). Waspada risiko pembusukan akar tanaman melon.`,
+        actuatorName: 'Blower Sirkulasi',
+        actuatorPin: 'GPIO 27',
+        actuatorState: blowerActive ? 'MENYALA' : 'SIAGA OTOMATIS (STANDBY)',
+        actuatorActive: blowerActive,
+        actionType: 'BLOWER',
+        borderClass: 'border-amber-400 bg-gradient-to-r from-amber-500/10 via-yellow-500/5 to-amber-500/10',
+        badgeClass: 'bg-amber-500 text-white',
+        iconBg: 'bg-amber-100 text-amber-700 border border-amber-200',
+      };
+    }
+
+    return null;
+  }, [suhuVal, mediaVal, mediaDO, currentTelemetry, sprayerActive, blowerActive]);
+
   const minuteTelemetries = useMemo(() => {
     const seenMinutes = new Set();
     return (data?.recentTelemetries || []).filter((row) => {
@@ -566,12 +671,90 @@ export const DashboardView = ({ apiUrl, setActiveTab, sensorsEnabled = true }) =
               <span className={`w-2 h-2 rounded-full ${isEspOnline ? 'bg-[#7BAF5A] animate-pulse' : 'bg-red-500'}`} />
               <span>{isEspOnline ? 'ESP32 ONLINE' : 'ESP32 OFFLINE'}</span>
             </span>
+
+            {/* Badge Proteksi Iklim Otomatis */}
+            <span
+              className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border transition-colors ${
+                climateAlert
+                  ? (climateAlert.level === 'RED' ? 'bg-red-100 text-red-800 border-red-300' : 'bg-amber-100 text-amber-800 border-amber-300')
+                  : 'bg-[#FAFAF7] text-[#5A6B5A] border-[#D4DFC8]'
+              }`}
+              title="Proteksi Iklim Otomatis: Suhu >40°C -> Sprayer (D26), Suhu <25°C -> Blower (D27)"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-[#7BAF5A]" />
+              <span>
+                {climateAlert 
+                  ? (climateAlert.level === 'RED' ? '🚨 Proteksi Aktif: Bahaya Iklim' : '⚠️ Proteksi: Waspada Iklim') 
+                  : (sprayerActive ? '💧 Sprayer ON (D26)' : (blowerActive ? '🌀 Blower ON (D27)' : 'Proteksi Iklim Siaga (D26 & D27)'))}
+              </span>
+            </span>
           </div>
 
           <span className="text-[11px] text-[#8A9B7A] font-mono">
             {currentTelemetry.created_at ? `Update: ${formatWibTime(currentTelemetry.created_at)}` : 'Sinkronisasi Otomatis'}
           </span>
         </div>
+
+        {/* ========================================================================= */}
+        {/* BANNER PERINGATAN PROTEKSI IKLIM & MEDIA (WARNING MERAH & KUNING)         */}
+        {/* ========================================================================= */}
+        {climateAlert && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`mb-4 rounded-2xl border-2 p-4 sm:p-5 transition-all ${climateAlert.borderClass}`}
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3.5">
+              <div className="flex items-start space-x-3.5">
+                <div className={`p-2.5 rounded-xl shrink-0 ${climateAlert.iconBg}`}>
+                  {climateAlert.level === 'RED' ? (
+                    climateAlert.actionType === 'SPRAYER' ? (
+                      <Droplets className="w-6 h-6 animate-bounce" />
+                    ) : (
+                      <Fan className="w-6 h-6 animate-spin" />
+                    )
+                  ) : (
+                    <AlertTriangle className="w-6 h-6" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wide border ${climateAlert.badgeClass}`}>
+                      {climateAlert.badge}
+                    </span>
+                    <span className="text-xs font-mono font-semibold text-[#2D3B2D]">
+                      Suhu: {suhuVal !== null ? `${suhuVal.toFixed(1)}°C` : '—'} | Media: {mediaVal !== null ? `${mediaVal.toFixed(0)}%` : mediaDO || '—'}
+                    </span>
+                  </div>
+                  <h4 className="text-sm sm:text-base font-black text-[#2D3B2D]">
+                    {climateAlert.title}
+                  </h4>
+                  <p className="text-xs sm:text-sm text-[#4A5B4A] mt-1 max-w-3xl leading-relaxed">
+                    {climateAlert.description}
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Aktuator Terkait (Sprayer GPIO 26 / Blower GPIO 27) */}
+              <div className="flex items-center space-x-2.5 shrink-0 bg-white/90 backdrop-blur-xs border border-white/80 p-2.5 rounded-xl shadow-xs self-start md:self-center">
+                <div className={`p-2 rounded-lg ${climateAlert.actionType === 'SPRAYER' ? 'bg-cyan-100 text-cyan-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                  {climateAlert.actionType === 'SPRAYER' ? <Droplets className="w-4 h-4" /> : <Fan className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-[#8A9B7A] uppercase tracking-wider">
+                    {climateAlert.actuatorName} ({climateAlert.actuatorPin})
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <span className={`w-2 h-2 rounded-full ${climateAlert.actuatorActive ? 'bg-green-500 animate-ping' : 'bg-amber-400'}`} />
+                    <span className="text-xs font-black text-[#2D3B2D]">
+                      {climateAlert.actuatorState}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5 sm:gap-4">
           

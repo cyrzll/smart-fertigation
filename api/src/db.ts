@@ -302,11 +302,18 @@ export async function initDb() {
       );
       const profileId = resProfile.insertId;
 
-      // Seed default valves
+      // Seed default valves (Valve 1 / Nutrisi, Sprayer GPIO 26, Blower GPIO 27)
       const [valvesCount]: any = await conn.query('SELECT COUNT(*) as count FROM valves');
       if (valvesCount[0].count === 0) {
-        await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Valve 1 (Zona A)', '25', 'Solenoide Valve Utama Zona Barat']);
-        await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Valve 2 (Zona B)', '26', 'Solenoide Valve Tambahan Zona Timur']);
+        await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Nutrisi Zona 1', '25', 'Solenoid Valve Fertigasi Nutrisi (GPIO 25)']);
+        await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Sprayer Pendingin Ruangan', '26', 'Relay Sprayer Mist Cooling Suhu Tinggi (GPIO 26)']);
+        await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Blower Sirkulasi Udara', '27', 'Relay Blower Exhaust Fan Sirkulasi Dingin (GPIO 27)']);
+      } else {
+        // Ensure Sprayer and Blower exist if only 2 valves exist
+        const [blowerExists]: any = await conn.query("SELECT COUNT(*) as count FROM valves WHERE gpio = '27'");
+        if (blowerExists[0].count === 0) {
+          await conn.query('INSERT INTO valves (name, gpio, description) VALUES (?, ?, ?)', ['Blower Sirkulasi Udara', '27', 'Relay Blower Exhaust Fan Sirkulasi Dingin (GPIO 27)']);
+        }
       }
 
       const [valvesList]: any = await pool.query('SELECT * FROM valves ORDER BY id ASC');
